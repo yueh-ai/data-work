@@ -1,0 +1,65 @@
+# CSV Data Work
+
+This context describes an AI-assisted workflow for transforming CSV files with code while showing the user an up-to-date hosted visual preview.
+
+## Language
+
+**Agent Website**:
+The separate web application where the user chats with an AI agent that can run Python code in a sandboxed workspace.
+_Avoid_: Companion website, preview website
+
+**Companion Website**:
+A hosted website that displays the current CSV state for visual inspection during the data work loop. It is a preview surface, not the place where CSV transformations happen.
+_Avoid_: Local website, editor, transformation app
+
+**Python Workspace**:
+The sandboxed execution environment used by the AI agent to inspect CSV files and produce transformed CSV outputs with reproducible Python code.
+_Avoid_: Website backend, manual editor
+
+**Working CSV Version**:
+The latest transformed CSV file produced by code in the Python Workspace. It is distinct from the original CSV, which remains unchanged by default.
+_Avoid_: Original file, uploaded file
+
+**Current Table Data**:
+The parsed rows, columns, and lightweight metadata currently displayed by the Companion Website for an Upload Session. In the POC, this can live only in the active browser and does not need to be durable.
+_Avoid_: Durable CSV, source of truth, Version History
+
+**CSV Version**:
+A CSV file state uploaded to an Upload Session at a specific point in the data work loop. One Upload Session can have many CSV Versions.
+_Avoid_: Preview, cache entry, dataframe
+
+**Version History**:
+The ordered set of CSV Versions retained for an Upload Session so the user can return to earlier states.
+_Avoid_: Audit log, backend memory, browser state
+
+**Upload Session**:
+A temporary anonymous workspace on the Companion Website that groups the CSV versions shown to one user during one data work loop.
+_Avoid_: Project, dataset, account
+
+**Upload Token**:
+A short-lived credential that allows the Agent Website to send Working CSV Versions into a specific Upload Session.
+_Avoid_: API key, password, login
+
+**Viewer URL**:
+A session-specific Companion Website URL that lets the user inspect the CSV versions in an Upload Session.
+_Avoid_: Login, dashboard, account page
+
+## Example Dialogue
+
+Developer: "The Agent Website creates a new Working CSV Version in the Python Workspace."
+
+Domain expert: "Then the Companion Website should display that Working CSV Version, but it should not transform the data itself."
+
+Developer: "So the Companion Website is hosted and preview-only, while Python remains the source of truth for data changes."
+
+Domain expert: "Each upload becomes a CSV Version in the Upload Session's Version History."
+
+Developer: "For the POC, do we need to store every CSV Version?"
+
+Domain expert: "No. The active browser can hold Current Table Data so we can prove the AI edit-and-preview loop before adding durable Version History."
+
+Domain expert: "The Companion Website should create an Upload Session and give the agent an Upload Token for that session."
+
+Developer: "Does the user need an account?"
+
+Domain expert: "No. The Upload Session is anonymous, and access is scoped by the Viewer URL and Upload Token."
