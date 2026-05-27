@@ -1,0 +1,31 @@
+{
+  "name": "csv-data-work",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server/index.ts",
+    "build": "vite build && tsc -p tsconfig.server.json",
+    "start": "node dist/server/index.js",
+    "test": "tsx --test src/**/*.test.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "express": "^5.2.1",
+    "lucide-react": "^0.561.0",
+    "papaparse": "^5.5.3",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "vite": "^7.2.4"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.0.0",
+    "@types/papaparse": "^5.3.16",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

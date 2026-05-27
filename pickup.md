@@ -6,6 +6,22 @@ Build a single-file Markdown skill and a hosted Companion Website POC for AI-ass
 
 Use `goal.md` as the current source for product scope.
 
+## Latest Implementation Status
+
+- Added a hosted TypeScript Companion Website POC.
+- Added an Express backend with anonymous Upload Session creation, token-scoped CSV upload, and Server-Sent Events viewer updates.
+- Added a Vite React frontend that creates sessions, shows Viewer URL / Upload Token / upload command, parses uploaded CSV in the browser, infers lightweight column types, and renders a spreadsheet-like table.
+- Added direct browser CSV upload as a fallback path when the creating browser still has the Upload Token.
+- Added the single-file skill at `skills/csv-data-work/SKILL.md`.
+- Added run/build notes in `README.md`.
+- Verified `npm run typecheck`, `npm run build`, API upload/SSE flow, and desktop/mobile browser rendering.
+
+Current local preview server used for verification:
+
+```sh
+PORT=4173 npm run start
+```
+
 ## Files To Read First
 
 - `goal.md` - updated POC goal and open questions.
