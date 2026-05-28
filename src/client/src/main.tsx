@@ -687,6 +687,9 @@ function isColumnTarget(review: ReviewState | null, column: string) {
 }
 
 function isActiveColumnTarget(review: ReviewState | null, column: string) {
+  if (!review || review.highlightsCleared) {
+    return false;
+  }
   const active = activeSummary(review);
   return Boolean(active?.targets.some((target) => target.kind === "column" && target.column === column));
 }
@@ -704,6 +707,9 @@ function cellClass(review: ReviewState | null, rowId: string, column: string, ba
     if (item.targets.some((target) => target.kind === "column" && target.column === column)) {
       classes.push(`review-cell review-cell--${groupForSummary(item.kind)}`);
     }
+    if (item.targets.some((target) => target.kind === "row" && target.rowId === rowId)) {
+      classes.push(`review-cell review-cell--${groupForSummary(item.kind)}`);
+    }
   }
 
   const active = activeSummary(review);
@@ -711,7 +717,8 @@ function cellClass(review: ReviewState | null, rowId: string, column: string, ba
     active?.targets.some(
       (target) =>
         (target.kind === "cell" && target.rowId === rowId && target.column === column) ||
-        (target.kind === "column" && target.column === column)
+        (target.kind === "column" && target.column === column) ||
+        (target.kind === "row" && target.rowId === rowId)
     )
   ) {
     classes.push("review-cell--active");
