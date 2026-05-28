@@ -54,6 +54,15 @@ type ReviewState = {
   highlightsCleared: boolean;
 };
 
+type ReviewTargetLookup = {
+  columnGroups: Map<string, Set<string>>;
+  rowGroups: Map<string, Set<string>>;
+  cellGroups: Map<string, Set<string>>;
+  activeColumns: Set<string>;
+  activeRows: Set<string>;
+  activeCells: Set<string>;
+};
+
 const root = createRoot(document.getElementById("root") as HTMLElement);
 root.render(<App />);
 
@@ -502,6 +511,7 @@ function ChangeReviewBar({
 
 function TablePreview({ table, review, filename }: { table: ParsedTable; review: ReviewState | null; filename?: string | null }) {
   const columns = visibleColumns(table);
+  const reviewTargets = useMemo(() => buildReviewTargetLookup(review), [review]);
 
   return (
     <section className="preview-panel" aria-label="Current CSV table">
@@ -525,12 +535,7 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
               <th className="row-number">#</th>
               {columns.map((column) => (
                 <th
-                  className={[
-                    isColumnTarget(review, column) ? "review-cell" : "",
-                    isActiveColumnTarget(review, column) ? "review-cell--active" : ""
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
+                  className={columnHeaderClass(reviewTargets, column)}
                   key={column}
                 >
                   <span>{column}</span>
@@ -546,7 +551,7 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
                 <tr key={rowId || index}>
                   <td className="row-number">{index + 1}</td>
                   {columns.map((column) => (
-                    <td className={cellClass(review, rowId, column)} key={column}>
+                    <td className={cellClass(reviewTargets, rowId, column)} key={column}>
                       {String(row[column] ?? "")}
                     </td>
                   ))}
@@ -675,56 +680,99 @@ function detailBadge(kind: ChangeSummaryItem["kind"]) {
   return "info";
 }
 
-function activeSummary(review: ReviewState | null) {
-  return review?.summary.find((item) => item.id === review.activeSummaryId) ?? null;
-}
+function buildReviewTargetLookup(review: ReviewState | null): ReviewTargetLookup {
+  const lookup: ReviewTargetLookup = {
+    columnGroups: new Map(),
+    rowGroups: new Map(),
+    cellGroups: new Map(),
+    activeColumns: new Set(),
+    activeRows: new Set(),
+    activeCells: new Set()
+  };
 
-function isColumnTarget(review: ReviewState | null, column: string) {
   if (!review || review.highlightsCleared) {
-    return false;
-  }
-  return review.summary.some((item) => item.targets.some((target) => target.kind === "column" && target.column === column));
-}
-
-function isActiveColumnTarget(review: ReviewState | null, column: string) {
-  if (!review || review.highlightsCleared) {
-    return false;
-  }
-  const active = activeSummary(review);
-  return Boolean(active?.targets.some((target) => target.kind === "column" && target.column === column));
-}
-
-function cellClass(review: ReviewState | null, rowId: string, column: string, baseClass = "") {
-  if (!review || review.highlightsCleared) {
-    return baseClass;
+    return lookup;
   }
 
-  const classes = [baseClass];
   for (const item of review.summary) {
-    if (item.targets.some((target) => target.kind === "cell" && target.rowId === rowId && target.column === column)) {
-      classes.push(`review-cell review-cell--${groupForSummary(item.kind)}`);
-    }
-    if (item.targets.some((target) => target.kind === "column" && target.column === column)) {
-      classes.push(`review-cell review-cell--${groupForSummary(item.kind)}`);
-    }
-    if (item.targets.some((target) => target.kind === "row" && target.rowId === rowId)) {
-      classes.push(`review-cell review-cell--${groupForSummary(item.kind)}`);
+    const group = groupForSummary(item.kind);
+    const isActive = item.id === review.activeSummaryId;
+
+    for (const target of item.targets) {
+      if (target.kind === "column") {
+        addGroup(lookup.columnGroups, target.column, group);
+        if (isActive) {
+          lookup.activeColumns.add(target.column);
+        }
+      } else if (target.kind === "row") {
+        addGroup(lookup.rowGroups, target.rowId, group);
+        if (isActive) {
+          lookup.activeRows.add(target.rowId);
+        }
+      } else {
+        const key = cellKey(target.rowId, target.column);
+        addGroup(lookup.cellGroups, key, group);
+        if (isActive) {
+          lookup.activeCells.add(key);
+        }
+      }
     }
   }
 
-  const active = activeSummary(review);
-  if (
-    active?.targets.some(
-      (target) =>
-        (target.kind === "cell" && target.rowId === rowId && target.column === column) ||
-        (target.kind === "column" && target.column === column) ||
-        (target.kind === "row" && target.rowId === rowId)
-    )
-  ) {
+  return lookup;
+}
+
+function columnHeaderClass(lookup: ReviewTargetLookup, column: string) {
+  const groups = lookup.columnGroups.get(column);
+  const classes = classesForGroups(groups);
+  if (lookup.activeColumns.has(column)) {
+    classes.push("review-cell--active");
+  }
+  return classes.join(" ");
+}
+
+function cellClass(lookup: ReviewTargetLookup, rowId: string, column: string, baseClass = "") {
+  const key = cellKey(rowId, column);
+  const groups = new Set<string>();
+  mergeGroups(groups, lookup.cellGroups.get(key));
+  mergeGroups(groups, lookup.columnGroups.get(column));
+  mergeGroups(groups, lookup.rowGroups.get(rowId));
+
+  const classes = [baseClass, ...classesForGroups(groups)];
+  if (lookup.activeCells.has(key) || lookup.activeColumns.has(column) || lookup.activeRows.has(rowId)) {
     classes.push("review-cell--active");
   }
 
   return classes.filter(Boolean).join(" ");
+}
+
+function classesForGroups(groups: Set<string> | undefined) {
+  if (!groups?.size) {
+    return [];
+  }
+  return ["review-cell", ...Array.from(groups, (group) => `review-cell--${group}`)];
+}
+
+function addGroup(groupsByTarget: Map<string, Set<string>>, target: string, group: string) {
+  const groups = groupsByTarget.get(target);
+  if (groups) {
+    groups.add(group);
+  } else {
+    groupsByTarget.set(target, new Set([group]));
+  }
+}
+
+function mergeGroups(target: Set<string>, source: Set<string> | undefined) {
+  if (!source) {
+    return;
+  }
+  for (const group of source) {
+    target.add(group);
+  }
+}
+
+function cellKey(rowId: string, column: string) {
+  return `${rowId}\u0000${column}`;
 }
 
 function formatTime(value: string) {
