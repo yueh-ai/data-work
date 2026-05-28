@@ -512,6 +512,15 @@ function ChangeReviewBar({
 function TablePreview({ table, review, filename }: { table: ParsedTable; review: ReviewState | null; filename?: string | null }) {
   const visibleColumnNames = useMemo(() => visibleColumns(table), [table]);
   const removedColumnNames = useMemo(() => removedColumns(review), [review]);
+  const removedColumnSet = useMemo(() => new Set(removedColumnNames), [removedColumnNames]);
+  const removedGhostRows = useMemo(() => removedRows(review), [review]);
+  const previousRowsById = useMemo(() => {
+    const rowsById = new Map<string, ParsedTable["rows"][number]>();
+    for (const row of review?.previousTable.rows ?? []) {
+      rowsById.set(String(row[rowIdColumn] ?? ""), row);
+    }
+    return rowsById;
+  }, [review]);
   const columns = useMemo(
     () => [
       ...visibleColumnNames,
@@ -543,7 +552,7 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
               <th className="row-number">#</th>
               {columns.map((column) => (
                 <th
-                  className={columnHeaderClass(reviewTargets, column, removedColumnNames.includes(column))}
+                  className={columnHeaderClass(reviewTargets, column, removedColumnSet.has(column))}
                   key={column}
                 >
                   <span>{column}</span>
@@ -559,7 +568,7 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
                 <tr key={rowId || index}>
                   <td className="row-number">{index + 1}</td>
                   {columns.map((column) => {
-                    const isRemovedColumn = removedColumnNames.includes(column);
+                    const isRemovedColumn = removedColumnSet.has(column);
                     return (
                       <td
                         className={cellClass(
@@ -570,21 +579,21 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
                         )}
                         key={column}
                       >
-                        {String(isRemovedColumn ? previousRowById(review, rowId)?.[column] ?? "" : row[column] ?? "")}
+                        {String(isRemovedColumn ? previousRowsById.get(rowId)?.[column] ?? "" : row[column] ?? "")}
                       </td>
                     );
                   })}
                 </tr>
               );
             })}
-            {removedRows(review).map((row, index) => {
+            {removedGhostRows.map((row, index) => {
               const rowId = String(row[rowIdColumn] ?? "");
               return (
                 <tr className="review-row--removed" key={`removed:${rowId || index}`}>
                   <td className="row-number">−</td>
                   {columns.map((column) => (
                     <td
-                      className={`review-cell review-cell--delete${removedColumnNames.includes(column) ? " review-column--removed" : ""}`}
+                      className={`review-cell review-cell--delete${removedColumnSet.has(column) ? " review-column--removed" : ""}`}
                       key={column}
                     >
                       {String(row[column] ?? "")}
@@ -738,10 +747,6 @@ function removedRows(review: ReviewState | null) {
     )
   );
   return review.previousTable.rows.filter((row) => removedIds.has(String(row[rowIdColumn] ?? "")));
-}
-
-function previousRowById(review: ReviewState | null, rowId: string) {
-  return review?.previousTable.rows.find((row) => String(row[rowIdColumn] ?? "") === rowId) ?? null;
 }
 
 function columnType(table: ParsedTable, review: ReviewState | null, column: string) {
