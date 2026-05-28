@@ -583,7 +583,10 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
                 <tr className="review-row--removed" key={`removed:${rowId || index}`}>
                   <td className="row-number">−</td>
                   {columns.map((column) => (
-                    <td className="review-cell review-cell--delete" key={column}>
+                    <td
+                      className={`review-cell review-cell--delete${removedColumnNames.includes(column) ? " review-column--removed" : ""}`}
+                      key={column}
+                    >
                       {String(row[column] ?? "")}
                     </td>
                   ))}
