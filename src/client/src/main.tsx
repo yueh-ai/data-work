@@ -18,7 +18,7 @@ import {
 
 import { summarizeDiff, type ChangeSummaryItem } from "./changeSummary.js";
 import { diffTables } from "./csvDiff.js";
-import { parseCsvTable, type ParsedTable } from "./csvTable.js";
+import { parseCsvTable, type ParsedTable, rowIdColumn, visibleColumns } from "./csvTable.js";
 import "./styles.css";
 
 type SessionCreateResponse = {
@@ -500,13 +500,15 @@ function ChangeReviewBar({
   );
 }
 
-function TablePreview({ table, review: _review, filename }: { table: ParsedTable; review: ReviewState | null; filename?: string | null }) {
+function TablePreview({ table, review, filename }: { table: ParsedTable; review: ReviewState | null; filename?: string | null }) {
+  const columns = visibleColumns(table);
+
   return (
     <section className="preview-panel" aria-label="Current CSV table">
       <div className="preview-heading">
         <div>
           <h2>{filename ?? "Current Working CSV Version"}</h2>
-          <p>{table.columns.map((column) => `${column}: ${table.types[column]}`).join(" · ")}</p>
+          <p>{columns.map((column) => `${column}: ${table.types[column]}`).join(" · ")}</p>
         </div>
       </div>
       {table.warnings.length ? (
@@ -521,8 +523,16 @@ function TablePreview({ table, review: _review, filename }: { table: ParsedTable
           <thead>
             <tr>
               <th className="row-number">#</th>
-              {table.columns.map((column) => (
-                <th key={column}>
+              {columns.map((column) => (
+                <th
+                  className={[
+                    isColumnTarget(review, column) ? "review-cell" : "",
+                    isActiveColumnTarget(review, column) ? "review-cell--active" : ""
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  key={column}
+                >
                   <span>{column}</span>
                   <small>{table.types[column]}</small>
                 </th>
@@ -530,14 +540,19 @@ function TablePreview({ table, review: _review, filename }: { table: ParsedTable
             </tr>
           </thead>
           <tbody>
-            {table.rows.map((row, index) => (
-              <tr key={index}>
-                <td className="row-number">{index + 1}</td>
-                {table.columns.map((column) => (
-                  <td key={column}>{String(row[column] ?? "")}</td>
-                ))}
-              </tr>
-            ))}
+            {table.rows.map((row, index) => {
+              const rowId = String(row[rowIdColumn] ?? "");
+              return (
+                <tr key={rowId || index}>
+                  <td className="row-number">{index + 1}</td>
+                  {columns.map((column) => (
+                    <td className={cellClass(review, rowId, column)} key={column}>
+                      {String(row[column] ?? "")}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -658,6 +673,51 @@ function detailBadge(kind: ChangeSummaryItem["kind"]) {
     return "modify";
   }
   return "info";
+}
+
+function activeSummary(review: ReviewState | null) {
+  return review?.summary.find((item) => item.id === review.activeSummaryId) ?? null;
+}
+
+function isColumnTarget(review: ReviewState | null, column: string) {
+  if (!review || review.highlightsCleared) {
+    return false;
+  }
+  return review.summary.some((item) => item.targets.some((target) => target.kind === "column" && target.column === column));
+}
+
+function isActiveColumnTarget(review: ReviewState | null, column: string) {
+  const active = activeSummary(review);
+  return Boolean(active?.targets.some((target) => target.kind === "column" && target.column === column));
+}
+
+function cellClass(review: ReviewState | null, rowId: string, column: string, baseClass = "") {
+  if (!review || review.highlightsCleared) {
+    return baseClass;
+  }
+
+  const classes = [baseClass];
+  for (const item of review.summary) {
+    if (item.targets.some((target) => target.kind === "cell" && target.rowId === rowId && target.column === column)) {
+      classes.push(`review-cell review-cell--${groupForSummary(item.kind)}`);
+    }
+    if (item.targets.some((target) => target.kind === "column" && target.column === column)) {
+      classes.push(`review-cell review-cell--${groupForSummary(item.kind)}`);
+    }
+  }
+
+  const active = activeSummary(review);
+  if (
+    active?.targets.some(
+      (target) =>
+        (target.kind === "cell" && target.rowId === rowId && target.column === column) ||
+        (target.kind === "column" && target.column === column)
+    )
+  ) {
+    classes.push("review-cell--active");
+  }
+
+  return classes.filter(Boolean).join(" ");
 }
 
 function formatTime(value: string) {
