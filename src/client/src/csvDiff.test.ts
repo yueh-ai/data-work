@@ -44,6 +44,7 @@ test("diffTables detects added rows removed rows and modified cells by row id", 
 test("diffTables ignores row id and treats missing and empty values as equal", () => {
   const previous = parseCsvTable("_row_id,name,score\nrow_000001,Ada,\n");
   const next = parseCsvTable("_row_id,name,score\nrow_000001,Ada,\n");
+  delete previous.rows[0].score;
 
   const diff = diffTables(previous, next);
 
