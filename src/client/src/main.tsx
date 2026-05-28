@@ -133,7 +133,12 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const secrets = getSessionSecrets(sessionId);
 
   useEffect(() => {
+    setSession(null);
     setConnection("connecting");
+    setCsvEvent(null);
+    setTable(null);
+    setReview(null);
+    setParseError(null);
     const events = new EventSource(`/api/sessions/${sessionId}/events`);
 
     events.addEventListener("session", (event) => {
@@ -437,6 +442,7 @@ function ChangeReviewBar({
             return (
               <button
                 className={`change-chip change-chip--${group}`}
+                aria-pressed={review.activeGroup === group}
                 data-active={review.activeGroup === group}
                 key={item.id}
                 type="button"
@@ -448,11 +454,23 @@ function ChangeReviewBar({
           })}
         </div>
         <div className="change-review__nav">
-          <button className="icon-button" type="button" title="Previous change" onClick={() => onMoveActiveSummary(-1)}>
+          <button
+            className="icon-button"
+            type="button"
+            title="Previous change"
+            aria-label="Previous change"
+            onClick={() => onMoveActiveSummary(-1)}
+          >
             ‹
           </button>
           <span>{review.summary.length ? `${activeIndex + 1} of ${review.summary.length}` : "0 of 0"}</span>
-          <button className="icon-button" type="button" title="Next change" onClick={() => onMoveActiveSummary(1)}>
+          <button
+            className="icon-button"
+            type="button"
+            title="Next change"
+            aria-label="Next change"
+            onClick={() => onMoveActiveSummary(1)}
+          >
             ›
           </button>
           <button className="clear-button" type="button" onClick={onClearHighlights}>
@@ -465,6 +483,7 @@ function ChangeReviewBar({
         {visibleDetails.map((item) => (
           <button
             className="change-detail"
+            aria-current={review.activeSummaryId === item.id ? "true" : undefined}
             data-active={review.activeSummaryId === item.id}
             key={item.id}
             type="button"
