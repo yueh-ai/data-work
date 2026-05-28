@@ -510,7 +510,15 @@ function ChangeReviewBar({
 }
 
 function TablePreview({ table, review, filename }: { table: ParsedTable; review: ReviewState | null; filename?: string | null }) {
-  const columns = visibleColumns(table);
+  const visibleColumnNames = useMemo(() => visibleColumns(table), [table]);
+  const removedColumnNames = useMemo(() => removedColumns(review), [review]);
+  const columns = useMemo(
+    () => [
+      ...visibleColumnNames,
+      ...removedColumnNames.filter((column) => !visibleColumnNames.includes(column))
+    ],
+    [visibleColumnNames, removedColumnNames]
+  );
   const reviewTargets = useMemo(() => buildReviewTargetLookup(review), [review]);
 
   return (
@@ -518,7 +526,7 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
       <div className="preview-heading">
         <div>
           <h2>{filename ?? "Current Working CSV Version"}</h2>
-          <p>{columns.map((column) => `${column}: ${table.types[column]}`).join(" · ")}</p>
+          <p>{columns.map((column) => `${column}: ${columnType(table, review, column)}`).join(" · ")}</p>
         </div>
       </div>
       {table.warnings.length ? (
@@ -535,11 +543,11 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
               <th className="row-number">#</th>
               {columns.map((column) => (
                 <th
-                  className={columnHeaderClass(reviewTargets, column)}
+                  className={columnHeaderClass(reviewTargets, column, removedColumnNames.includes(column))}
                   key={column}
                 >
                   <span>{column}</span>
-                  <small>{table.types[column]}</small>
+                  <small>{columnType(table, review, column)}</small>
                 </th>
               ))}
             </tr>
@@ -550,8 +558,32 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
               return (
                 <tr key={rowId || index}>
                   <td className="row-number">{index + 1}</td>
+                  {columns.map((column) => {
+                    const isRemovedColumn = removedColumnNames.includes(column);
+                    return (
+                      <td
+                        className={cellClass(
+                          reviewTargets,
+                          rowId,
+                          column,
+                          isRemovedColumn ? "review-cell review-cell--delete review-column--removed" : ""
+                        )}
+                        key={column}
+                      >
+                        {String(isRemovedColumn ? previousRowById(review, rowId)?.[column] ?? "" : row[column] ?? "")}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+            {removedRows(review).map((row, index) => {
+              const rowId = String(row[rowIdColumn] ?? "");
+              return (
+                <tr className="review-row--removed" key={`removed:${rowId || index}`}>
+                  <td className="row-number">−</td>
                   {columns.map((column) => (
-                    <td className={cellClass(reviewTargets, rowId, column)} key={column}>
+                    <td className="review-cell review-cell--delete" key={column}>
                       {String(row[column] ?? "")}
                     </td>
                   ))}
@@ -680,6 +712,39 @@ function detailBadge(kind: ChangeSummaryItem["kind"]) {
   return "info";
 }
 
+function removedColumns(review: ReviewState | null) {
+  if (!review || review.highlightsCleared) {
+    return [];
+  }
+  return review.summary.flatMap((item) =>
+    item.kind === "column_removed"
+      ? item.targets.flatMap((target) => (target.kind === "column" ? [target.column] : []))
+      : []
+  );
+}
+
+function removedRows(review: ReviewState | null) {
+  if (!review || review.highlightsCleared) {
+    return [];
+  }
+  const removedIds = new Set(
+    review.summary.flatMap((item) =>
+      item.kind === "rows_removed"
+        ? item.targets.flatMap((target) => (target.kind === "row" ? [target.rowId] : []))
+        : []
+    )
+  );
+  return review.previousTable.rows.filter((row) => removedIds.has(String(row[rowIdColumn] ?? "")));
+}
+
+function previousRowById(review: ReviewState | null, rowId: string) {
+  return review?.previousTable.rows.find((row) => String(row[rowIdColumn] ?? "") === rowId) ?? null;
+}
+
+function columnType(table: ParsedTable, review: ReviewState | null, column: string) {
+  return table.types[column] ?? review?.previousTable.types[column] ?? "";
+}
+
 function buildReviewTargetLookup(review: ReviewState | null): ReviewTargetLookup {
   const lookup: ReviewTargetLookup = {
     columnGroups: new Map(),
@@ -722,9 +787,12 @@ function buildReviewTargetLookup(review: ReviewState | null): ReviewTargetLookup
   return lookup;
 }
 
-function columnHeaderClass(lookup: ReviewTargetLookup, column: string) {
+function columnHeaderClass(lookup: ReviewTargetLookup, column: string, isRemovedColumn = false) {
   const groups = lookup.columnGroups.get(column);
   const classes = classesForGroups(groups);
+  if (isRemovedColumn) {
+    classes.push("review-cell", "review-cell--delete", "review-column--removed");
+  }
   if (lookup.activeColumns.has(column)) {
     classes.push("review-cell--active");
   }

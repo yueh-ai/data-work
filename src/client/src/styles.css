@@ -646,6 +646,13 @@ th.review-cell {
   background: #c9971a;
 }
 
+.review-row--removed td,
+.review-column--removed {
+  opacity: 0.76;
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+}
+
 @keyframes review-spark {
   0%,
   12%,
