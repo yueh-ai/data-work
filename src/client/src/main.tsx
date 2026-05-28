@@ -139,6 +139,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
     setTable(null);
     setReview(null);
     setParseError(null);
+    setCopyState(null);
+    setUploading(false);
     const events = new EventSource(`/api/sessions/${sessionId}/events`);
 
     events.addEventListener("session", (event) => {
