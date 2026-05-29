@@ -53,7 +53,9 @@ type WorkingPreviewEvent = {
   csv: string;
 };
 
-type PreviewEvent = (HandoffPreviewEvent & { kind: "handoff" }) | (WorkingPreviewEvent & { kind: "working" });
+type HandoffStatus = "pending" | "confirmed" | "expired";
+
+type PreviewEvent = (HandoffPreviewEvent & { kind: "handoff"; handoffStatus: HandoffStatus }) | (WorkingPreviewEvent & { kind: "working" });
 
 type ConnectionState = "idle" | "connecting" | "live" | "error";
 
@@ -179,7 +181,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
     events.addEventListener("handoff-preview", (event) => {
       const next = JSON.parse((event as MessageEvent).data) as HandoffPreviewEvent;
-      setPreviewEvent({ ...next, kind: "handoff" });
+      setPreviewEvent({ ...next, kind: "handoff", handoffStatus: "pending" });
       setSession((current) => (current ? { ...current, pendingHandoff: true } : current));
       setUploading(false);
       parseCsv(next.csv);
@@ -194,12 +196,12 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
     events.addEventListener("handoff-cleared", () => {
       setSession((current) => (current ? { ...current, pendingHandoff: false } : current));
-      setPreviewEvent((current) => (current?.kind === "handoff" ? null : current));
+      setPreviewEvent((current) => (current?.kind === "handoff" ? { ...current, handoffStatus: "confirmed" } : current));
     });
 
     events.addEventListener("handoff-expired", () => {
       setSession((current) => (current ? { ...current, pendingHandoff: false } : current));
-      setPreviewEvent((current) => (current?.kind === "handoff" ? null : current));
+      setPreviewEvent((current) => (current?.kind === "handoff" ? { ...current, handoffStatus: "expired" } : current));
     });
 
     events.onerror = () => {
@@ -401,7 +403,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           <InlineMessage
             tone="info"
             icon={<RefreshCw size={16} />}
-            text={`Source handoff preview. Agent import expires at ${formatTime(previewEvent.expiresAt)}.`}
+            text={handoffNoticeText(previewEvent)}
           />
         ) : previewEvent?.kind === "working" ? (
           <InlineMessage
@@ -707,6 +709,16 @@ function TablePreview({
       </div>
     </section>
   );
+}
+
+function handoffNoticeText(previewEvent: HandoffPreviewEvent & { handoffStatus: HandoffStatus }) {
+  if (previewEvent.handoffStatus === "pending") {
+    return `Source handoff preview. Agent import expires at ${formatTime(previewEvent.expiresAt)}.`;
+  }
+  if (previewEvent.handoffStatus === "confirmed") {
+    return "Source handoff preview retained after import confirmation. Pending handoff is no longer available.";
+  }
+  return "Source handoff preview retained after expiry. Pending handoff is no longer available.";
 }
 
 function readRoute(path: string) {
