@@ -128,7 +128,7 @@ Behavior:
 - Preserves and validates `_row_id` if present.
 - Replaces any existing pending handoff for the session.
 - Stores the normalized CSV in memory for 30 minutes.
-- Emits a `csv` SSE event with the normalized handoff CSV and `expiresAt`.
+- Emits a `handoff-preview` SSE event with the normalized handoff CSV and `expiresAt`.
 
 Download the pending handoff CSV:
 
@@ -165,7 +165,7 @@ Behavior:
 - Accepts CSV bytes from the agent.
 - Requires `_row_id`.
 - Validates `_row_id` values are present and unique.
-- Emits a `csv` SSE event with the Working CSV.
+- Emits a `working-preview` SSE event with the Working CSV.
 - Discards CSV bytes after the request has been handled.
 
 ## SSE Events
@@ -180,19 +180,30 @@ type SessionEvent = {
 };
 ```
 
-CSV events carry renderable CSV bytes to connected viewers:
+Preview events carry renderable CSV bytes to connected viewers. The backend uses separate event names so the UI can show handoff and working states without inspecting payload fields.
+
+Pending UI-uploaded source files use `handoff-preview`:
 
 ```ts
-type CsvEvent = {
+type HandoffPreviewEvent = {
+  uploadedAt: string;
+  expiresAt: string;
+  filename: string | null;
+  bytes: number;
+  csv: string;
+};
+```
+
+Agent Working CSV Versions use `working-preview`:
+
+```ts
+type WorkingPreviewEvent = {
   uploadedAt: string;
   filename: string | null;
   bytes: number;
   csv: string;
-  expiresAt?: string;
 };
 ```
-
-`expiresAt` is present only for pending handoff CSVs. The UI can use that field when it needs to show that the rendered CSV is waiting for agent import.
 
 On reconnect, the backend may replay a pending handoff CSV because it still owns that temporary handoff copy. It must not replay the latest agent Working CSV Version because those bytes are not retained.
 
@@ -230,12 +241,12 @@ For browser upload:
 
 1. UI sends the raw file to `PUT /handoff`.
 2. UI shows a preparation state and does not render the raw local file.
-3. UI waits for the normalized `csv` SSE event.
+3. UI waits for the normalized `handoff-preview` SSE event.
 4. UI renders the normalized CSV and hides `_row_id`.
 
 For working preview:
 
-1. UI receives the `csv` SSE event from `/working`.
+1. UI receives the `working-preview` SSE event from `/working`.
 2. UI parses and renders the CSV.
 3. UI compares against the previous browser-held table when available.
 
