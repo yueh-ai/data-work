@@ -2,34 +2,36 @@
 
 Build a single-file Markdown skill and a hosted companion website POC that help a user chat with an AI agent to process, clean, transform, and feature-engineer CSV files.
 
-The core experience is an AI-assisted CSV editing loop where the agent uses Python code in a sandboxed Python Workspace to modify data, then pushes the latest result to a hosted Companion Website so the user can visually confirm that the table changed.
+The core experience is an AI-assisted CSV editing loop where the agent uses Python code in a sandboxed Python Workspace to modify data, then uploads Working CSV previews to a hosted Companion Website so the user can visually confirm that the table changed. The Python Workspace owns working data; the Companion Website backend is only a live bridge and short-lived UI handoff shelf.
 
 The POC is intentionally about proving the live edit-and-preview loop. Durable storage, S3-backed version history, production-scale previewing, and robust large-file handling are deferred.
 
 ## POC User Experience
 
 1. The user opens the hosted Companion Website.
-2. The Companion Website creates an anonymous Upload Session with a Viewer URL and Upload Token.
-3. The user gives the Upload Token or upload instructions to the AI agent running in the separate Agent Website.
-4. The user provides or points to a CSV file.
-5. The agent loads the CSV into the Python Workspace and inspects it with Python.
-6. The agent uploads the initial CSV state to the Companion Website.
-7. The Companion Website updates the active browser view with the current table data.
-8. The user chats with the agent to request data processing or feature engineering.
-9. For every data change, the agent writes and runs Python code against the CSV.
-10. The agent saves the updated CSV as the current working version in the Python Workspace.
-11. The agent uploads the latest CSV to the Companion Website.
-12. The active browser view replaces its current table data so the user can inspect the change.
-13. The loop continues until the user is satisfied.
+2. The Companion Website creates an anonymous Upload Session with a Viewer URL, Working Upload URL, Handoff Download URL, and Handoff Confirm URL.
+3. The user gives the session instructions to the AI agent running in the separate Agent Website.
+4. The user provides or points to a CSV file. If the user uploads the starting CSV through the UI, the backend normalizes it as a Pending Handoff CSV for agent import.
+5. The agent loads the CSV into the Python Workspace, importing and confirming any pending UI handoff first when needed.
+6. The agent ensures or validates `_row_id` and inspects the CSV with Python.
+7. The agent uploads the initial Working CSV Version to the Companion Website.
+8. The Companion Website relays the preview to the active browser view and discards agent working bytes.
+9. The user chats with the agent to request data processing or feature engineering.
+10. For every data change, the agent writes and runs Python code against the local Working CSV Version.
+11. The agent saves and verifies the updated CSV in the Python Workspace.
+12. The agent uploads the current Working CSV Version to `/working`.
+13. The active browser view replaces its current table data so the user can inspect the change.
+14. The loop continues until the user is satisfied.
 
 ## POC Architecture Direction
 
 - The Companion Website is hosted, not a local-only app.
 - The AI agent runs in a separate Agent Website.
-- The Companion Website uses a TypeScript backend for anonymous session creation and token-scoped upload.
+- The Companion Website uses a TypeScript backend for anonymous session creation, pending UI handoffs, and live preview relay.
 - The POC stores the current parsed table data in the active frontend browser state.
-- The backend may act as a transient relay for uploads, but it should not be treated as durable storage.
-- Losing the current uploaded data on refresh, disconnect, or backend restart is acceptable for the POC.
+- The backend may store only pending UI handoff CSVs briefly so the agent can import them.
+- The backend validates and relays agent Working CSV uploads but does not store the latest agent Working CSV Version.
+- Losing the active browser preview on refresh, disconnect, or backend restart is acceptable for the POC; the recovery path is for the agent to upload the current local Working CSV Version again.
 - The website displays the whole current table for POC simplicity.
 - S3, databases, durable Version History, pagination, row virtualization, sampled preview, and server-generated preview artifacts are deferred.
 
@@ -51,7 +53,7 @@ The POC is intentionally about proving the live edit-and-preview loop. Durable s
 - Always modify CSV data by writing and running code in the Python Workspace.
 - Keep the original CSV unchanged unless the user explicitly asks to overwrite it.
 - Save transformed outputs as a new or working CSV file in the Python Workspace.
-- Upload the latest CSV to the Companion Website after each completed transformation.
+- Upload the current Working CSV Version to the Companion Website after each completed transformation.
 - Verify the updated CSV after writing it by reading it back with Python.
 - Report important row counts, column changes, or data-loss risks to the user.
 - Ask before destructive operations such as dropping rows, overwriting columns, or removing many values when the intent is ambiguous.
@@ -65,9 +67,10 @@ The website should:
 
 - Create anonymous Upload Sessions.
 - Provide a Viewer URL for the user.
-- Provide an Upload Token or upload endpoint for the agent.
-- Accept the initial CSV and repeated updated CSV uploads.
-- Replace the current displayed table after each upload.
+- Provide Working Upload, Handoff Download, and Handoff Confirm URLs for the agent.
+- Accept browser source uploads as short-lived Pending Handoff CSVs.
+- Accept agent Working CSV uploads as live previews that are validated, relayed, and discarded by the backend.
+- Replace the current displayed table after each handoff or working preview.
 - Store the current table data in frontend browser state for the POC.
 - Display the current CSV as a spreadsheet-like table.
 - Show basic dataset metadata such as row count, column count, column names, and inferred column types when practical.
@@ -107,7 +110,8 @@ It should include:
 - Rules for using Python in the Python Workspace.
 - Rules for preserving the original CSV and saving working outputs.
 - Instructions for creating or joining an Upload Session.
-- Instructions for initial website upload and repeated upload after each edit.
+- Instructions for importing pending UI handoffs when the agent has no source CSV yet.
+- Instructions for ensuring `_row_id` and uploading Working CSV Versions after each edit.
 - Verification steps after every transformation.
 - A short checklist the agent can follow during each edit loop.
 
@@ -129,8 +133,9 @@ The POC Companion Website should include:
 - The agent reliably uses Python code to make every CSV change.
 - The original file is protected by default.
 - The Companion Website can create an anonymous session.
-- The agent can upload the initial CSV and subsequent updated CSVs.
-- The active Companion Website view shows the latest uploaded data.
+- The agent can import a UI-uploaded starting CSV or use an existing local CSV path.
+- The agent can upload the initial and subsequent Working CSV Versions.
+- The active Companion Website view shows the latest relayed preview.
 - The user can visually inspect changes in the website while continuing to chat.
 - Transformations are reproducible because the code used to make them is available.
 - The POC proves the live workflow without requiring durable storage.
@@ -141,13 +146,13 @@ The POC Companion Website should include:
 - Use anonymous token-scoped Upload Sessions for v1.
 - Use a TypeScript backend for session and upload coordination.
 - Keep transformations out of the website; Python remains the transformation surface.
-- Keep only the current CSV state in POC scope.
+- Keep only active browser Current Table Data and optional pending UI handoff bytes in POC scope.
 - Let the frontend hold current parsed table data for POC display.
+- Keep agent Working CSV Versions in the Python Workspace, not backend memory.
 - Defer S3-backed Version History until after the POC.
 
 ## Open Questions
 
-- Should the upload-to-browser update path use polling, Server-Sent Events, WebSockets, or a simpler POC refresh button?
-- Should the backend parse uploaded CSV into JSON for the frontend, or should the frontend parse the uploaded CSV payload?
 - What deployment target should host the TypeScript backend and frontend?
 - How should the final skill package or reference the Companion Website?
+- What production retention and cleanup policy should replace the POC's in-memory Pending Handoff CSV shelf?
