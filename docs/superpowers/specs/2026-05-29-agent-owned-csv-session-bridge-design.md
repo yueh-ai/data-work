@@ -54,7 +54,7 @@ The backend must not retain CSV bytes from agent Working CSV uploads after those
 3. User uploads a source CSV through the UI.
 4. UI waits while the backend prepares the preview.
 5. Backend validates the CSV enough for preview coordination, adds `_row_id` if missing, preserves and validates `_row_id` if present, and stores the normalized pending handoff in memory.
-6. Backend sets `expiresAt` to 30 minutes after upload and emits a CSV event to connected viewers.
+6. Backend sets `expiresAt` to 30 minutes after upload and emits a `handoff-preview` event to connected viewers.
 7. UI renders the normalized handoff preview, hiding `_row_id`, and shows that the source file is waiting for agent import.
 8. Agent polls or requests `GET /api/sessions/:sessionId/handoff/csv`.
 9. Agent saves the normalized handoff CSV into the Python Workspace and verifies it can be read.
