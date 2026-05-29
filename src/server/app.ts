@@ -4,18 +4,27 @@ import { fileURLToPath } from "node:url";
 
 import express, { type Request, type Response } from "express";
 
-import { CsvRowUploadError, normalizeUploadedCsv } from "./csvRows.js";
+import { CsvRowUploadError, normalizeHandoffCsv } from "./csvRows.js";
 
 type Session = {
   id: string;
   createdAt: string;
-  latestCsv?: string;
-  latestUpload?: UploadNotice;
+  pendingHandoff?: PendingHandoff;
   viewers: Set<Response>;
 };
 
-type UploadNotice = {
+type PendingHandoff = {
   uploadedAt: string;
+  expiresAt: string;
+  filename: string | null;
+  bytes: number;
+  csv: string;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+type PreviewNotice = {
+  uploadedAt: string;
+  expiresAt: string;
   filename: string | null;
   bytes: number;
   csv: string;
@@ -23,13 +32,16 @@ type UploadNotice = {
 
 type CreateAppOptions = {
   serveClient?: boolean;
+  handoffTtlMs?: number;
 };
 
 const placeholderUploadToken = "POC_PLACEHOLDER_UPLOAD_TOKEN";
+const defaultHandoffTtlMs = 30 * 60 * 1000;
 const sessions = new Map<string, Session>();
 
 export async function createApp(options: CreateAppOptions = {}) {
   const serveClient = options.serveClient ?? process.env.NODE_ENV === "production";
+  const handoffTtlMs = options.handoffTtlMs ?? defaultHandoffTtlMs;
   const app = express();
 
   app.use((req, res, next) => {
@@ -51,14 +63,15 @@ export async function createApp(options: CreateAppOptions = {}) {
       sessionId: id,
       uploadToken: placeholderUploadToken,
       viewerUrl: `/session/${id}`,
-      uploadUrl: `/api/sessions/${id}/upload`,
-      downloadUrl: `/api/sessions/${id}/csv`,
-      uploadCommand: [
+      workingUploadUrl: `/api/sessions/${id}/working`,
+      handoffDownloadUrl: `/api/sessions/${id}/handoff/csv`,
+      handoffConfirmUrl: `/api/sessions/${id}/handoff/confirm`,
+      workingUploadCommand: [
         "curl",
         "-X PUT",
         "-H 'Content-Type: text/csv'",
         "--data-binary @working.csv",
-        absoluteUrl(req, `/api/sessions/${id}/upload`)
+        absoluteUrl(req, `/api/sessions/${id}/working`)
       ].join(" ")
     });
   });
@@ -74,34 +87,9 @@ export async function createApp(options: CreateAppOptions = {}) {
     res.json({
       sessionId: session.id,
       createdAt: session.createdAt,
-      hasCurrentCsv: Boolean(session.latestUpload),
-      latestUpload: session.latestUpload
-        ? {
-            uploadedAt: session.latestUpload.uploadedAt,
-            filename: session.latestUpload.filename,
-            bytes: session.latestUpload.bytes
-          }
-        : null
+      activeViewers: session.viewers.size,
+      pendingHandoff: session.pendingHandoff ? pendingHandoffMetadata(session.pendingHandoff) : null
     });
-  });
-
-  app.get("/api/sessions/:sessionId/csv", (req, res) => {
-    const session = sessions.get(req.params.sessionId);
-
-    if (!session) {
-      res.status(404).json({ error: "Upload Session not found." });
-      return;
-    }
-
-    if (!session.latestCsv || !session.latestUpload) {
-      res.status(404).json({ error: "No current CSV for this Upload Session." });
-      return;
-    }
-
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="${downloadFilename(session.latestUpload.filename)}"`);
-    res.send(session.latestCsv);
   });
 
   app.get("/api/sessions/:sessionId/events", (req, res) => {
@@ -123,11 +111,14 @@ export async function createApp(options: CreateAppOptions = {}) {
     sendEvent(res, "session", {
       sessionId: session.id,
       createdAt: session.createdAt,
-      hasCurrentCsv: Boolean(session.latestUpload)
+      pendingHandoff: Boolean(session.pendingHandoff)
     });
 
-    if (session.latestUpload) {
-      sendEvent(res, "csv", session.latestUpload);
+    if (session.pendingHandoff) {
+      sendEvent(res, "handoff-preview", {
+        ...pendingHandoffMetadata(session.pendingHandoff),
+        csv: session.pendingHandoff.csv
+      });
     }
 
     const heartbeat = setInterval(() => {
@@ -141,7 +132,7 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
 
   app.put(
-    "/api/sessions/:sessionId/upload",
+    "/api/sessions/:sessionId/handoff",
     express.raw({ limit: "1gb", type: () => true }),
     (req, res) => {
       const session = sessions.get(req.params.sessionId);
@@ -151,57 +142,94 @@ export async function createApp(options: CreateAppOptions = {}) {
         return;
       }
 
-      const body = req.body;
-      if (!Buffer.isBuffer(body) || body.length === 0) {
-        res.status(400).json({ error: "Upload a non-empty CSV file." });
-        return;
-      }
-
-      const csv = stripBom(body.toString("utf8"));
-      if (!csv.trim()) {
-        res.status(400).json({ error: "Upload a CSV file with visible content." });
+      const csv = readCsvBody(req, res);
+      if (csv === null) {
         return;
       }
 
       let normalizedCsv: string;
       try {
-        normalizedCsv = normalizeUploadedCsv(csv, !session.latestCsv);
+        normalizedCsv = normalizeHandoffCsv(prepareHandoffCsvForNormalization(csv));
       } catch (err) {
         if (err instanceof CsvRowUploadError) {
-          res.status(400).json({
-            error: err.code,
-            message: err.message,
-            ...(err.detail ? { detail: err.detail } : {})
-          });
+          sendCsvError(res, err);
           return;
         }
         throw err;
       }
 
-      const notice: UploadNotice = {
-        uploadedAt: new Date().toISOString(),
+      clearPendingHandoff(session);
+
+      const uploadedAt = new Date();
+      const expiresAt = new Date(uploadedAt.getTime() + handoffTtlMs);
+      const pendingHandoff: PendingHandoff = {
+        uploadedAt: uploadedAt.toISOString(),
+        expiresAt: expiresAt.toISOString(),
         filename: parseFilename(req.get("content-disposition")),
         bytes: Buffer.byteLength(normalizedCsv, "utf8"),
-        csv: normalizedCsv
+        csv: normalizedCsv,
+        timer: setTimeout(() => expirePendingHandoff(session, pendingHandoff), handoffTtlMs)
       };
+      pendingHandoff.timer.unref?.();
+      session.pendingHandoff = pendingHandoff;
 
-      session.latestCsv = normalizedCsv;
-      session.latestUpload = notice;
-
-      for (const viewer of session.viewers) {
-        sendEvent(viewer, "csv", notice);
-      }
+      const notice: PreviewNotice = {
+        ...pendingHandoffMetadata(pendingHandoff),
+        csv: pendingHandoff.csv
+      };
+      sendToViewers(session, "handoff-preview", notice);
 
       res.json({
         ok: true,
         sessionId: session.id,
-        uploadedAt: notice.uploadedAt,
-        filename: notice.filename,
-        bytes: notice.bytes,
+        pendingHandoff: pendingHandoffMetadata(pendingHandoff),
         activeViewers: session.viewers.size
       });
     }
   );
+
+  app.get("/api/sessions/:sessionId/handoff/csv", (req, res) => {
+    const session = sessions.get(req.params.sessionId);
+
+    if (!session) {
+      res.status(404).json({ error: "Upload Session not found." });
+      return;
+    }
+
+    if (!session.pendingHandoff) {
+      res.status(404).json({ error: "No pending handoff CSV for this Upload Session." });
+      return;
+    }
+
+    if (Date.now() >= Date.parse(session.pendingHandoff.expiresAt)) {
+      expirePendingHandoff(session, session.pendingHandoff);
+      res.status(404).json({ error: "No pending handoff CSV for this Upload Session." });
+      return;
+    }
+
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${downloadFilename(session.pendingHandoff.filename)}"`);
+    res.send(session.pendingHandoff.csv);
+  });
+
+  app.post("/api/sessions/:sessionId/handoff/confirm", (req, res) => {
+    const session = sessions.get(req.params.sessionId);
+
+    if (!session) {
+      res.status(404).json({ error: "Upload Session not found." });
+      return;
+    }
+
+    if (!session.pendingHandoff) {
+      res.json({ ok: true, status: "no_pending_handoff" });
+      return;
+    }
+
+    clearPendingHandoff(session);
+    sendToViewers(session, "handoff-cleared", { sessionId: session.id });
+    res.json({ ok: true, status: "confirmed" });
+  });
 
   if (serveClient) {
     const clientDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../client");
@@ -228,6 +256,78 @@ function sendEvent(res: Response, event: string, data: unknown) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+function pendingHandoffMetadata(pendingHandoff: PendingHandoff) {
+  return {
+    uploadedAt: pendingHandoff.uploadedAt,
+    expiresAt: pendingHandoff.expiresAt,
+    filename: pendingHandoff.filename,
+    bytes: pendingHandoff.bytes
+  };
+}
+
+function clearPendingHandoff(session: Session) {
+  if (!session.pendingHandoff) {
+    return;
+  }
+
+  clearTimeout(session.pendingHandoff.timer);
+  session.pendingHandoff = undefined;
+}
+
+function expirePendingHandoff(session: Session, pendingHandoff: PendingHandoff) {
+  if (session.pendingHandoff !== pendingHandoff) {
+    return;
+  }
+
+  clearPendingHandoff(session);
+  sendToViewers(session, "handoff-expired", { sessionId: session.id });
+}
+
+function sendToViewers(session: Session, event: string, data: unknown) {
+  for (const viewer of session.viewers) {
+    sendEvent(viewer, event, data);
+  }
+}
+
+function readCsvBody(req: Request, res: Response) {
+  const body = req.body;
+  if (!Buffer.isBuffer(body) || body.length === 0) {
+    res.status(400).json({ error: "Upload a non-empty CSV file." });
+    return null;
+  }
+
+  const csv = stripBom(body.toString("utf8"));
+  if (!csv.trim()) {
+    res.status(400).json({ error: "Upload a CSV file with visible content." });
+    return null;
+  }
+
+  return csv;
+}
+
+function sendCsvError(res: Response, err: CsvRowUploadError) {
+  res.status(400).json({
+    error: err.code,
+    message: err.message,
+    ...(err.detail ? { detail: err.detail } : {})
+  });
+}
+
+function prepareHandoffCsvForNormalization(csv: string) {
+  if (csv.includes(",")) {
+    return csv;
+  }
+
+  const newline = csv.includes("\r\n") ? "\r\n" : "\n";
+  const hasTrailingNewline = csv.endsWith("\n");
+  const lines = csv.split(/\r?\n/);
+  if (hasTrailingNewline) {
+    lines.pop();
+  }
+
+  return `${lines.map((line) => `${line},`).join(newline)}${hasTrailingNewline ? newline : ""}`;
+}
+
 function stripBom(value: string) {
   return value.charCodeAt(0) === 0xfeff ? value.slice(1) : value;
 }
@@ -247,5 +347,5 @@ function absoluteUrl(req: Request, pathname: string) {
 }
 
 function downloadFilename(filename: string | null) {
-  return filename?.replace(/["\r\n]/g, "") || "working.csv";
+  return filename?.replace(/["\r\n]/g, "") || "source.csv";
 }
