@@ -78,12 +78,13 @@ type CreateSessionResponse = {
   uploadToken: string;
   viewerUrl: string;
   workingUploadUrl: string;
-  handoffUploadUrl: string;
   handoffDownloadUrl: string;
   handoffConfirmUrl: string;
   workingUploadCommand: string;
 };
 ```
+
+The browser can derive the handoff upload endpoint from `sessionId`; it does not need to be included as an agent-facing session field.
 
 Fetch session metadata:
 
