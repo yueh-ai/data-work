@@ -194,10 +194,12 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
     events.addEventListener("handoff-cleared", () => {
       setSession((current) => (current ? { ...current, pendingHandoff: false } : current));
+      setPreviewEvent((current) => (current?.kind === "handoff" ? null : current));
     });
 
     events.addEventListener("handoff-expired", () => {
       setSession((current) => (current ? { ...current, pendingHandoff: false } : current));
+      setPreviewEvent((current) => (current?.kind === "handoff" ? null : current));
     });
 
     events.onerror = () => {
@@ -311,6 +313,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
       }
     } catch (err) {
       setParseError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
       setUploading(false);
     }
   }

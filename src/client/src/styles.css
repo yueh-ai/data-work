@@ -179,7 +179,7 @@ h2 {
 
 .control-band {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(320px, 1.5fr) auto;
+  grid-template-columns: repeat(3, minmax(200px, 1fr)) minmax(360px, 1.5fr) auto;
   gap: 12px;
   align-items: stretch;
   padding: 14px;
