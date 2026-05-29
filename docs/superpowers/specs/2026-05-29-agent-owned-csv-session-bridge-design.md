@@ -105,12 +105,6 @@ type SessionResponse = {
     filename: string | null;
     bytes: number;
   };
-  lastPreview: null | {
-    role: "handoff" | "working";
-    uploadedAt: string;
-    filename: string | null;
-    bytes: number;
-  };
 };
 ```
 
@@ -172,7 +166,6 @@ Behavior:
 - Requires `_row_id`.
 - Validates `_row_id` values are present and unique.
 - Emits a `csv-preview` SSE event with `role: "working"`.
-- Updates preview metadata.
 - Discards CSV bytes after the request has been handled.
 
 ## SSE Events
