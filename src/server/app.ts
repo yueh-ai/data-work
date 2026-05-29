@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import express, { type Request, type Response } from "express";
 
-import { CsvRowUploadError, normalizeHandoffCsv } from "./csvRows.js";
+import { CsvRowUploadError, normalizeHandoffCsv, validateWorkingCsv } from "./csvRows.js";
 
 type Session = {
   id: string;
@@ -22,13 +22,15 @@ type PendingHandoff = {
   timer: ReturnType<typeof setTimeout>;
 };
 
-type PreviewNotice = {
+type HandoffPreviewNotice = {
   uploadedAt: string;
   expiresAt: string;
   filename: string | null;
   bytes: number;
   csv: string;
 };
+
+type WorkingPreviewNotice = Omit<HandoffPreviewNotice, "expiresAt">;
 
 type CreateAppOptions = {
   serveClient?: boolean;
@@ -173,7 +175,7 @@ export async function createApp(options: CreateAppOptions = {}) {
       pendingHandoff.timer.unref?.();
       session.pendingHandoff = pendingHandoff;
 
-      const notice: PreviewNotice = {
+      const notice: HandoffPreviewNotice = {
         ...pendingHandoffMetadata(pendingHandoff),
         csv: pendingHandoff.csv
       };
@@ -183,6 +185,52 @@ export async function createApp(options: CreateAppOptions = {}) {
         ok: true,
         sessionId: session.id,
         pendingHandoff: pendingHandoffMetadata(pendingHandoff),
+        activeViewers: session.viewers.size
+      });
+    }
+  );
+
+  app.put(
+    "/api/sessions/:sessionId/working",
+    express.raw({ limit: "1gb", type: () => true }),
+    (req, res) => {
+      const session = sessions.get(req.params.sessionId);
+      if (!session) {
+        res.status(404).json({ error: "Upload Session not found." });
+        return;
+      }
+
+      const csv = readCsvBody(req, res);
+      if (csv === null) {
+        return;
+      }
+
+      let workingCsv: string;
+      try {
+        workingCsv = validateWorkingCsv(csv);
+      } catch (err) {
+        if (err instanceof CsvRowUploadError) {
+          sendCsvError(res, err);
+          return;
+        }
+        throw err;
+      }
+
+      const notice: WorkingPreviewNotice = {
+        uploadedAt: new Date().toISOString(),
+        filename: parseFilename(req.get("content-disposition")),
+        bytes: Buffer.byteLength(workingCsv, "utf8"),
+        csv: workingCsv
+      };
+
+      sendToViewers(session, "working-preview", notice);
+
+      res.json({
+        ok: true,
+        sessionId: session.id,
+        uploadedAt: notice.uploadedAt,
+        filename: notice.filename,
+        bytes: notice.bytes,
         activeViewers: session.viewers.size
       });
     }

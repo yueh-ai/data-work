@@ -44,6 +44,54 @@ async function uploadHandoffCsv(origin: string, sessionId: string, csv: string) 
   });
 }
 
+async function uploadWorkingCsv(origin: string, sessionId: string, csv: string) {
+  return fetch(`${origin}/api/sessions/${sessionId}/working`, {
+    method: "PUT",
+    headers: {
+      "Content-Disposition": 'attachment; filename="working.csv"',
+      "Content-Type": "text/csv"
+    },
+    body: csv
+  });
+}
+
+async function readUploadError(response: Response) {
+  return (await response.json()) as { error: string; message?: string; detail?: string };
+}
+
+async function readSseEvent(origin: string, sessionId: string, eventName: string) {
+  const controller = new AbortController();
+  const response = await fetch(`${origin}/api/sessions/${sessionId}/events`, { signal: controller.signal });
+  assert.equal(response.status, 200);
+  assert(response.body);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() ?? "";
+      for (const event of events) {
+        if (event.includes(`event: ${eventName}\n`)) {
+          const dataLine = event.split("\n").find((line) => line.startsWith("data: "));
+          assert(dataLine);
+          return JSON.parse(dataLine.slice("data: ".length)) as Record<string, unknown>;
+        }
+      }
+    }
+  } finally {
+    controller.abort();
+  }
+
+  throw new Error(`SSE event ${eventName} was not received.`);
+}
+
 async function downloadHandoffCsv(origin: string, sessionId: string) {
   const response = await fetch(`${origin}/api/sessions/${sessionId}/handoff/csv`);
   assert.equal(response.status, 200);
@@ -158,4 +206,51 @@ test("expired handoff csv is not downloadable", async () => {
     },
     { handoffTtlMs: 20 }
   );
+});
+
+test("working upload rejects missing row ids", async () => {
+  await withTestServer(async (origin) => {
+    const session = await createSession(origin);
+
+    const response = await uploadWorkingCsv(origin, session.sessionId, "latitude\n37.88\n");
+    assert.equal(response.status, 400);
+    assert.equal((await readUploadError(response)).error, "missing_row_id");
+  });
+});
+
+test("working upload rejects duplicate row ids", async () => {
+  await withTestServer(async (origin) => {
+    const session = await createSession(origin);
+
+    const response = await uploadWorkingCsv(origin, session.sessionId, "_row_id,latitude\nrow_000001,37.88\nrow_000001,37.89\n");
+    assert.equal(response.status, 400);
+    assert.equal((await readUploadError(response)).error, "duplicate_row_id");
+  });
+});
+
+test("working upload rejects empty row ids", async () => {
+  await withTestServer(async (origin) => {
+    const session = await createSession(origin);
+
+    const response = await uploadWorkingCsv(origin, session.sessionId, "_row_id,latitude\n,37.88\n");
+    assert.equal(response.status, 400);
+    assert.equal((await readUploadError(response)).error, "empty_row_id");
+  });
+});
+
+test("working upload emits working preview and is not downloadable as handoff", async () => {
+  await withTestServer(async (origin) => {
+    const session = await createSession(origin);
+    const eventPromise = readSseEvent(origin, session.sessionId, "working-preview");
+
+    const response = await uploadWorkingCsv(origin, session.sessionId, "_row_id,latitude\nrow_000001,37.88\n");
+    assert.equal(response.status, 200);
+
+    const event = await eventPromise;
+    assert.equal(event.filename, "working.csv");
+    assert.equal(event.csv, "_row_id,latitude\nrow_000001,37.88\n");
+
+    const handoffDownload = await fetch(`${origin}/api/sessions/${session.sessionId}/handoff/csv`);
+    assert.equal(handoffDownload.status, 404);
+  });
 });
