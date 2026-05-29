@@ -682,9 +682,13 @@ th.review-cell {
   }
 }
 
-@media (max-width: 1000px) {
+@media (max-width: 1200px) {
   .control-band {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .command-block {
+    grid-column: 1 / -1;
   }
 
   .file-upload {
@@ -706,6 +710,10 @@ th.review-cell {
   .control-band,
   .metrics-grid {
     grid-template-columns: 1fr;
+  }
+
+  .command-block {
+    grid-column: auto;
   }
 
   .change-review__top {
