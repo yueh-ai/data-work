@@ -73,6 +73,10 @@ ROW_ID_COLUMN = "_row_id"
 ROW_ID_RE = re.compile(r"^row_(\d+)$")
 
 
+def format_row_id(value: int) -> str:
+    return f"row_{value:06d}"
+
+
 def validate_row_id(df: pd.DataFrame) -> None:
     if ROW_ID_COLUMN not in df.columns:
         raise ValueError(f"Missing required {ROW_ID_COLUMN!r} column")
@@ -96,20 +100,20 @@ def validate_row_id(df: pd.DataFrame) -> None:
 
 def next_row_id(df: pd.DataFrame) -> str:
     if ROW_ID_COLUMN not in df.columns or df.empty:
-        return "row_1"
+        return format_row_id(1)
 
     max_id = 0
     for value in df[ROW_ID_COLUMN].dropna().astype(str):
         match = ROW_ID_RE.match(value)
         if match:
             max_id = max(max_id, int(match.group(1)))
-    return f"row_{max_id + 1}"
+    return format_row_id(max_id + 1)
 
 
 def ensure_row_id(df: pd.DataFrame) -> pd.DataFrame:
     result = df.copy()
     if ROW_ID_COLUMN not in result.columns:
-        result.insert(0, ROW_ID_COLUMN, [f"row_{i}" for i in range(1, len(result) + 1)])
+        result.insert(0, ROW_ID_COLUMN, [format_row_id(i) for i in range(1, len(result) + 1)])
     validate_row_id(result)
     return result
 
@@ -132,7 +136,7 @@ def assign_row_ids_to_new_rows(existing_df: pd.DataFrame, new_rows_df: pd.DataFr
             return result
 
     start = int(ROW_ID_RE.match(next_row_id(existing_df)).group(1))
-    assigned = [f"row_{i}" for i in range(start, start + len(result))]
+    assigned = [format_row_id(i) for i in range(start, start + len(result))]
     if ROW_ID_COLUMN in result.columns:
         result[ROW_ID_COLUMN] = assigned
     else:
