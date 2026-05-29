@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
 
-import { createApp } from "./app.js";
+import { CsvRowUploadError, normalizeHandoffCsv, validateWorkingCsv } from "./csvRows.js";
 
 async function withTestServer(run: (origin: string) => Promise<void>) {
+  const { createApp } = await import("./app.js");
   const app = await createApp({ serveClient: false });
   const server = http.createServer(app);
 
@@ -50,6 +51,32 @@ async function downloadCsv(origin: string, sessionId: string) {
 async function readUploadError(response: Response) {
   return (await response.json()) as { error: string; message?: string; detail?: string };
 }
+
+test("handoff normalization adds sequential row ids when missing", () => {
+  const csv = "latitude,total_rooms\n37.88,880\n37.86,7099\n";
+
+  assert.equal(
+    normalizeHandoffCsv(csv),
+    "_row_id,latitude,total_rooms\nrow_000001,37.88,880\nrow_000002,37.86,7099\n"
+  );
+});
+
+test("handoff normalization preserves valid existing row ids", () => {
+  const csv = "_row_id,latitude\nrow_000010,37.88\nrow_000011,37.86\n";
+
+  assert.equal(normalizeHandoffCsv(csv), csv);
+});
+
+test("working validation rejects missing row ids", () => {
+  assert.throws(
+    () => validateWorkingCsv("latitude,total_rooms\n37.88,880\n"),
+    (error) => error instanceof CsvRowUploadError && error.code === "missing_row_id"
+  );
+});
+
+test("working validation returns valid csv unchanged apart from trailing newline", () => {
+  assert.equal(validateWorkingCsv("_row_id,latitude\nrow_000001,37.88"), "_row_id,latitude\nrow_000001,37.88\n");
+});
 
 test("uploads can omit auth and the latest CSV can be downloaded", async () => {
   await withTestServer(async (origin) => {
