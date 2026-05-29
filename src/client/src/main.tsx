@@ -26,23 +26,34 @@ type SessionCreateResponse = {
   sessionId: string;
   uploadToken: string;
   viewerUrl: string;
-  uploadUrl: string;
-  downloadUrl: string;
-  uploadCommand: string;
+  workingUploadUrl: string;
+  handoffDownloadUrl: string;
+  handoffConfirmUrl: string;
+  workingUploadCommand: string;
 };
 
 type SessionEvent = {
   sessionId: string;
   createdAt: string;
-  hasCurrentCsv: boolean;
+  pendingHandoff: boolean;
 };
 
-type CsvEvent = {
+type HandoffPreviewEvent = {
+  uploadedAt: string;
+  expiresAt: string;
+  filename: string | null;
+  bytes: number;
+  csv: string;
+};
+
+type WorkingPreviewEvent = {
   uploadedAt: string;
   filename: string | null;
   bytes: number;
   csv: string;
 };
+
+type PreviewEvent = (HandoffPreviewEvent & { kind: "handoff" }) | (WorkingPreviewEvent & { kind: "working" });
 
 type ConnectionState = "idle" | "connecting" | "live" | "error";
 
@@ -139,7 +150,7 @@ function CreateSession() {
 function SessionView({ sessionId }: { sessionId: string }) {
   const [session, setSession] = useState<SessionEvent | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("idle");
-  const [csvEvent, setCsvEvent] = useState<CsvEvent | null>(null);
+  const [previewEvent, setPreviewEvent] = useState<PreviewEvent | null>(null);
   const [table, setTable] = useState<ParsedTable | null>(null);
   const [review, setReview] = useState<ReviewState | null>(null);
   const [scrollRequest, setScrollRequest] = useState<ReviewScrollRequest | null>(null);
@@ -152,7 +163,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     setSession(null);
     setConnection("connecting");
-    setCsvEvent(null);
+    setPreviewEvent(null);
     setTable(null);
     setReview(null);
     setScrollRequest(null);
@@ -166,10 +177,27 @@ function SessionView({ sessionId }: { sessionId: string }) {
       setConnection("live");
     });
 
-    events.addEventListener("csv", (event) => {
-      const next = JSON.parse((event as MessageEvent).data) as CsvEvent;
-      setCsvEvent(next);
+    events.addEventListener("handoff-preview", (event) => {
+      const next = JSON.parse((event as MessageEvent).data) as HandoffPreviewEvent;
+      setPreviewEvent({ ...next, kind: "handoff" });
+      setSession((current) => (current ? { ...current, pendingHandoff: true } : current));
+      setUploading(false);
       parseCsv(next.csv);
+    });
+
+    events.addEventListener("working-preview", (event) => {
+      const next = JSON.parse((event as MessageEvent).data) as WorkingPreviewEvent;
+      setPreviewEvent({ ...next, kind: "working" });
+      setUploading(false);
+      parseCsv(next.csv);
+    });
+
+    events.addEventListener("handoff-cleared", () => {
+      setSession((current) => (current ? { ...current, pendingHandoff: false } : current));
+    });
+
+    events.addEventListener("handoff-expired", () => {
+      setSession((current) => (current ? { ...current, pendingHandoff: false } : current));
     });
 
     events.onerror = () => {
@@ -179,8 +207,10 @@ function SessionView({ sessionId }: { sessionId: string }) {
     return () => events.close();
   }, [sessionId]);
 
-  const uploadUrl = `/api/sessions/${sessionId}/upload`;
-  const downloadUrl = `${window.location.origin}/api/sessions/${sessionId}/csv`;
+  const handoffUploadUrl = `/api/sessions/${sessionId}/handoff`;
+  const workingUploadUrl = `/api/sessions/${sessionId}/working`;
+  const handoffDownloadUrl = `${window.location.origin}/api/sessions/${sessionId}/handoff/csv`;
+  const handoffConfirmUrl = `${window.location.origin}/api/sessions/${sessionId}/handoff/confirm`;
   const viewerUrl = `${window.location.origin}/session/${sessionId}`;
   const command = useMemo(() => {
     return [
@@ -188,9 +218,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
       "-X PUT",
       "-H 'Content-Type: text/csv'",
       "--data-binary @working.csv",
-      `${window.location.origin}${uploadUrl}`
+      `${window.location.origin}${workingUploadUrl}`
     ].join(" ");
-  }, [uploadUrl]);
+  }, [workingUploadUrl]);
 
   function parseCsv(csv: string) {
     setParseError(null);
@@ -266,7 +296,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     setUploading(true);
     setParseError(null);
     try {
-      const response = await fetch(uploadUrl, {
+      const response = await fetch(handoffUploadUrl, {
         method: "PUT",
         headers: {
           "Content-Type": file.type || "text/csv",
@@ -281,7 +311,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
       }
     } catch (err) {
       setParseError(err instanceof Error ? err.message : "Upload failed.");
-    } finally {
       setUploading(false);
     }
   }
@@ -323,11 +352,19 @@ function SessionView({ sessionId }: { sessionId: string }) {
         />
         <InfoBlock
           icon={<Download size={18} />}
-          label="Download URL"
-          value={downloadUrl}
-          actionLabel="Copy Download URL"
-          onCopy={() => copy("download", downloadUrl)}
-          copied={copyState === "download"}
+          label="Handoff Download"
+          value={secrets?.handoffDownloadUrl ? `${window.location.origin}${secrets.handoffDownloadUrl}` : handoffDownloadUrl}
+          actionLabel="Copy handoff download URL"
+          onCopy={() => copy("handoff-download", handoffDownloadUrl)}
+          copied={copyState === "handoff-download"}
+        />
+        <InfoBlock
+          icon={<Check size={18} />}
+          label="Confirm Import"
+          value={secrets?.handoffConfirmUrl ? `${window.location.origin}${secrets.handoffConfirmUrl}` : handoffConfirmUrl}
+          actionLabel="Copy handoff confirm URL"
+          onCopy={() => copy("handoff-confirm", handoffConfirmUrl)}
+          copied={copyState === "handoff-confirm"}
         />
         <div className="command-block">
           <div className="block-heading">
@@ -357,14 +394,27 @@ function SessionView({ sessionId }: { sessionId: string }) {
           icon={<RefreshCw size={16} />}
           text="Ephemeral POC state. Refresh, disconnect, or backend restart can clear the current table."
         />
+        {previewEvent?.kind === "handoff" ? (
+          <InlineMessage
+            tone="info"
+            icon={<RefreshCw size={16} />}
+            text={`Source handoff preview. Agent import expires at ${formatTime(previewEvent.expiresAt)}.`}
+          />
+        ) : previewEvent?.kind === "working" ? (
+          <InlineMessage
+            tone="info"
+            icon={<Activity size={16} />}
+            text="Live working preview from the agent. Refresh may require the agent to upload again."
+          />
+        ) : null}
         {parseError ? <InlineMessage tone="danger" icon={<AlertTriangle size={16} />} text={parseError} /> : null}
       </section>
 
       <section className="metrics-grid" aria-label="Current CSV metadata">
         <Metric label="Rows" value={table ? formatNumber(table.rows.length) : "0"} />
         <Metric label="Columns" value={table ? formatNumber(table.columns.length) : "0"} />
-        <Metric label="Bytes" value={csvEvent ? formatBytes(csvEvent.bytes) : "None"} />
-        <Metric label="Updated" value={csvEvent ? formatTime(csvEvent.uploadedAt) : "Waiting"} />
+        <Metric label="Bytes" value={previewEvent ? formatBytes(previewEvent.bytes) : "None"} />
+        <Metric label="Updated" value={previewEvent ? formatTime(previewEvent.uploadedAt) : "Waiting"} />
       </section>
 
       {table ? (
@@ -378,13 +428,17 @@ function SessionView({ sessionId }: { sessionId: string }) {
               onClearHighlights={clearHighlights}
             />
           ) : null}
-          <TablePreview table={table} review={review} scrollRequest={scrollRequest} filename={csvEvent?.filename} />
+          <TablePreview table={table} review={review} scrollRequest={scrollRequest} filename={previewEvent?.filename} />
         </>
       ) : (
         <section className="empty-preview">
           <FileSpreadsheet size={44} />
           <h2>No current CSV</h2>
-          <p>{session?.hasCurrentCsv ? "Waiting for the current upload to arrive." : "Upload the initial Working CSV Version to populate the table."}</p>
+          <p>
+            {session?.pendingHandoff
+              ? "Waiting for the normalized handoff preview to arrive."
+              : "Upload a source CSV in the browser, or have the agent upload a Working CSV Version."}
+          </p>
         </section>
       )}
     </main>
@@ -662,9 +716,10 @@ function saveSessionSecrets(session: SessionCreateResponse) {
     `csv-companion:${session.sessionId}`,
     JSON.stringify({
       uploadToken: session.uploadToken,
-      uploadUrl: session.uploadUrl,
-      downloadUrl: session.downloadUrl,
-      uploadCommand: session.uploadCommand
+      workingUploadUrl: session.workingUploadUrl,
+      handoffDownloadUrl: session.handoffDownloadUrl,
+      handoffConfirmUrl: session.handoffConfirmUrl,
+      workingUploadCommand: session.workingUploadCommand
     })
   );
 }
@@ -676,7 +731,10 @@ function getSessionSecrets(sessionId: string) {
   }
 
   try {
-    return JSON.parse(raw) as Pick<SessionCreateResponse, "uploadToken" | "uploadUrl" | "downloadUrl" | "uploadCommand">;
+    return JSON.parse(raw) as Pick<
+      SessionCreateResponse,
+      "uploadToken" | "workingUploadUrl" | "handoffDownloadUrl" | "handoffConfirmUrl" | "workingUploadCommand"
+    >;
   } catch {
     return null;
   }
