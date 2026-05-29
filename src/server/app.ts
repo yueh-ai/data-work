@@ -149,7 +149,7 @@ export async function createApp(options: CreateAppOptions = {}) {
 
       let normalizedCsv: string;
       try {
-        normalizedCsv = normalizeHandoffCsv(prepareHandoffCsvForNormalization(csv));
+        normalizedCsv = normalizeHandoffCsv(csv);
       } catch (err) {
         if (err instanceof CsvRowUploadError) {
           sendCsvError(res, err);
@@ -311,21 +311,6 @@ function sendCsvError(res: Response, err: CsvRowUploadError) {
     message: err.message,
     ...(err.detail ? { detail: err.detail } : {})
   });
-}
-
-function prepareHandoffCsvForNormalization(csv: string) {
-  if (csv.includes(",")) {
-    return csv;
-  }
-
-  const newline = csv.includes("\r\n") ? "\r\n" : "\n";
-  const hasTrailingNewline = csv.endsWith("\n");
-  const lines = csv.split(/\r?\n/);
-  if (hasTrailingNewline) {
-    lines.pop();
-  }
-
-  return `${lines.map((line) => `${line},`).join(newline)}${hasTrailingNewline ? newline : ""}`;
 }
 
 function stripBom(value: string) {

@@ -64,6 +64,10 @@ test("handoff normalization adds sequential row ids when missing", () => {
   );
 });
 
+test("handoff normalization accepts single-column csvs", () => {
+  assert.equal(normalizeHandoffCsv("latitude\n37.88\n"), "_row_id,latitude\nrow_000001,37.88\n");
+});
+
 test("handoff normalization preserves valid existing row ids", () => {
   const csv = "_row_id,latitude\nrow_000010,37.88\nrow_000011,37.86\n";
 

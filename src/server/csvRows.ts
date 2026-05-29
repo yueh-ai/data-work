@@ -46,6 +46,7 @@ export function validateWorkingCsv(csv: string) {
 
 function parseCsv(csv: string) {
   const parsed = Papa.parse<Record<string, string>>(csv, {
+    delimiter: ",",
     header: true,
     skipEmptyLines: "greedy",
     transformHeader: (header) => header.trim()
