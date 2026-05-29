@@ -1,5 +1,7 @@
 # POC Hosted CSV Preview Architecture
 
+Status: Superseded in part by [ADR 0003](0003-agent-owned-working-csv.md) for working-data ownership and latest Working CSV download behavior.
+
 For the POC, the Companion Website uses a TypeScript backend as a transient session, upload, and current-CSV download coordinator, while the active browser holds the current parsed table data and renders it as a spreadsheet-like table. This deliberately avoids S3, databases, backend dataframe memory, backend preview artifact storage, streaming preview, pagination, and cell-based preview caps until the core hosted workflow is proven; file-size and shape limits are operator-trusted guardrails rather than scale guarantees.
 
 **Consequences**

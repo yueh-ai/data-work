@@ -1,8 +1,8 @@
 # CSV Data Work POC
 
-Hosted Companion Website POC for AI-assisted CSV data work. The Companion Website creates anonymous Upload Sessions, accepts CSV uploads from an Agent Website, exposes the latest CSV for download, and updates the active viewer with the latest Working CSV Version.
+Hosted Companion Website POC for AI-assisted CSV data work. The Companion Website creates anonymous Upload Sessions, relays agent Working CSV previews to active viewers, and temporarily holds UI-origin handoffs so the agent can import them.
 
-The website is preview-only. CSV transformations happen in the Python Workspace with reproducible code.
+The website is preview-only. CSV transformations happen in the Python Workspace with reproducible code, and the backend does not own the latest Working CSV Version.
 
 ## Run Locally
 
@@ -17,20 +17,35 @@ Open:
 http://localhost:3000
 ```
 
-Create a new Upload Session, then upload a CSV with the generated command:
+Create a new Upload Session, then use the generated session ID with the commands below.
+
+Upload an agent Working CSV Version:
 
 ```sh
+SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response}"
+
 curl -X PUT \
   -H 'Content-Type: text/csv' \
   --data-binary @working.csv \
-  http://localhost:3000/api/sessions/<SESSION_ID>/upload
+  "http://localhost:3000/api/sessions/$SESSION_ID/working"
 ```
 
-Download the latest Working CSV Version for a session:
+Download a pending UI handoff CSV into the agent workspace:
 
 ```sh
-curl -o working.csv \
-  http://localhost:3000/api/sessions/<SESSION_ID>/csv
+SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response}"
+
+curl -f -o source.csv \
+  "http://localhost:3000/api/sessions/$SESSION_ID/handoff/csv"
+```
+
+Confirm handoff import after the agent has saved and verified the file:
+
+```sh
+SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response}"
+
+curl -X POST \
+  "http://localhost:3000/api/sessions/$SESSION_ID/handoff/confirm"
 ```
 
 ## Build
@@ -51,9 +66,12 @@ PORT=8080 npm run start
 - The backend is TypeScript/Express.
 - Upload Sessions are anonymous.
 - The Upload Token is a POC placeholder and is not enforced by the backend.
-- Uploads use `PUT /api/sessions/:sessionId/upload`.
-- Downloads use `GET /api/sessions/:sessionId/csv` for the latest Working CSV Version.
+- Browser source uploads use `PUT /api/sessions/:sessionId/handoff`.
+- Agents import pending UI handoffs with `GET /api/sessions/:sessionId/handoff/csv`.
+- Agents confirm handoff import with `POST /api/sessions/:sessionId/handoff/confirm`.
+- Agent Working CSV previews use `PUT /api/sessions/:sessionId/working`.
 - Viewer updates use Server-Sent Events from `GET /api/sessions/:sessionId/events`.
 - The browser parses CSV text and holds the current table data.
-- Backend memory is transient and not durable storage.
+- The backend stores only pending UI handoff CSVs for up to 30 minutes.
+- The backend does not store the latest agent Working CSV Version.
 - S3, databases, Version History, pagination, and virtualization are intentionally deferred.

@@ -1,5 +1,7 @@
 # Defer S3 Version History for POC
 
+Status: Superseded in part by [ADR 0003](0003-agent-owned-working-csv.md) for current Working CSV storage. Version History remains deferred.
+
 Although the domain model allows an Upload Session to have a Version History, the POC will focus only on the current CSV for the session and will not implement S3-backed history tracking yet. This keeps the first implementation centered on proving that AI-generated CSV edits can be uploaded and reflected in the UI before adding durable storage.
 
 **Consequences**
