@@ -59,7 +59,7 @@ async function readUploadError(response: Response) {
   return (await response.json()) as { error: string; message?: string; detail?: string };
 }
 
-async function readSseEvent(origin: string, sessionId: string, eventName: string) {
+async function openSseStream(origin: string, sessionId: string) {
   const controller = new AbortController();
   const response = await fetch(`${origin}/api/sessions/${sessionId}/events`, { signal: controller.signal });
   assert.equal(response.status, 200);
@@ -68,9 +68,9 @@ async function readSseEvent(origin: string, sessionId: string, eventName: string
   const decoder = new TextDecoder();
   let buffer = "";
 
-  try {
+  async function readEvent(eventName: string, timeoutMs = 2000) {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readChunk(eventName, timeoutMs);
       if (done) {
         break;
       }
@@ -85,11 +85,34 @@ async function readSseEvent(origin: string, sessionId: string, eventName: string
         }
       }
     }
-  } finally {
-    controller.abort();
+
+    throw new Error(`SSE event ${eventName} was not received before the stream closed.`);
   }
 
-  throw new Error(`SSE event ${eventName} was not received.`);
+  async function readChunk(eventName: string, timeoutMs: number) {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        reader.read(),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            reject(new Error(`Timed out after ${timeoutMs}ms waiting for SSE event ${eventName}.`));
+          }, timeoutMs);
+        })
+      ]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
+  }
+
+  async function close() {
+    controller.abort();
+    await reader.cancel().catch(() => undefined);
+  }
+
+  return { readEvent, close };
 }
 
 async function downloadHandoffCsv(origin: string, sessionId: string) {
@@ -241,16 +264,48 @@ test("working upload rejects empty row ids", async () => {
 test("working upload emits working preview and is not downloadable as handoff", async () => {
   await withTestServer(async (origin) => {
     const session = await createSession(origin);
-    const eventPromise = readSseEvent(origin, session.sessionId, "working-preview");
+    const stream = await openSseStream(origin, session.sessionId);
 
-    const response = await uploadWorkingCsv(origin, session.sessionId, "_row_id,latitude\nrow_000001,37.88\n");
-    assert.equal(response.status, 200);
+    try {
+      const initialEvent = await stream.readEvent("session");
+      assert.equal(initialEvent.sessionId, session.sessionId);
 
-    const event = await eventPromise;
-    assert.equal(event.filename, "working.csv");
-    assert.equal(event.csv, "_row_id,latitude\nrow_000001,37.88\n");
+      const response = await uploadWorkingCsv(origin, session.sessionId, "_row_id,latitude\nrow_000001,37.88\n");
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as {
+        ok: boolean;
+        sessionId: string;
+        uploadedAt?: unknown;
+        filename: string | null;
+        bytes: number;
+        activeViewers: number;
+      };
+      assert.deepEqual(
+        {
+          ok: body.ok,
+          sessionId: body.sessionId,
+          filename: body.filename,
+          bytes: body.bytes,
+          activeViewers: body.activeViewers
+        },
+        {
+          ok: true,
+          sessionId: session.sessionId,
+          filename: "working.csv",
+          bytes: Buffer.byteLength("_row_id,latitude\nrow_000001,37.88\n", "utf8"),
+          activeViewers: 1
+        }
+      );
+      assert.equal(typeof body.uploadedAt, "string");
 
-    const handoffDownload = await fetch(`${origin}/api/sessions/${session.sessionId}/handoff/csv`);
-    assert.equal(handoffDownload.status, 404);
+      const event = await stream.readEvent("working-preview");
+      assert.equal(event.filename, "working.csv");
+      assert.equal(event.csv, "_row_id,latitude\nrow_000001,37.88\n");
+
+      const handoffDownload = await fetch(`${origin}/api/sessions/${session.sessionId}/handoff/csv`);
+      assert.equal(handoffDownload.status, 404);
+    } finally {
+      await stream.close();
+    }
   });
 });
