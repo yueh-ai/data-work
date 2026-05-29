@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -15,8 +15,11 @@ import {
   Table2,
   Upload
 } from "lucide-react";
-import Papa from "papaparse";
 
+import { summarizeDiff, type ChangeSummaryItem, type ChangeTarget } from "./changeSummary.js";
+import { diffTables } from "./csvDiff.js";
+import { parseCsvTable, type ParsedTable, rowIdColumn, visibleColumns } from "./csvTable.js";
+import { activeCellClass, firstReviewScrollTarget, removedGhostCellClass } from "./reviewClassNames.js";
 import "./styles.css";
 
 type SessionCreateResponse = {
@@ -41,14 +44,30 @@ type CsvEvent = {
   csv: string;
 };
 
-type ParsedTable = {
-  columns: string[];
-  rows: Record<string, string>[];
-  types: Record<string, string>;
-  warnings: string[];
+type ConnectionState = "idle" | "connecting" | "live" | "error";
+
+type ReviewState = {
+  previousTable: ParsedTable;
+  currentTable: ParsedTable;
+  summary: ChangeSummaryItem[];
+  activeSummaryId: string | null;
+  activeGroup: string | null;
+  highlightsCleared: boolean;
 };
 
-type ConnectionState = "idle" | "connecting" | "live" | "error";
+type ReviewTargetLookup = {
+  columnGroups: Map<string, Set<string>>;
+  rowGroups: Map<string, Set<string>>;
+  cellGroups: Map<string, Set<string>>;
+  activeColumns: Set<string>;
+  activeRows: Set<string>;
+  activeCells: Set<string>;
+};
+
+type ReviewScrollRequest = {
+  summaryId: string;
+  sequence: number;
+};
 
 const root = createRoot(document.getElementById("root") as HTMLElement);
 root.render(<App />);
@@ -122,13 +141,24 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [csvEvent, setCsvEvent] = useState<CsvEvent | null>(null);
   const [table, setTable] = useState<ParsedTable | null>(null);
+  const [review, setReview] = useState<ReviewState | null>(null);
+  const [scrollRequest, setScrollRequest] = useState<ReviewScrollRequest | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const scrollSequence = useRef(0);
   const secrets = getSessionSecrets(sessionId);
 
   useEffect(() => {
+    setSession(null);
     setConnection("connecting");
+    setCsvEvent(null);
+    setTable(null);
+    setReview(null);
+    setScrollRequest(null);
+    setParseError(null);
+    setCopyState(null);
+    setUploading(false);
     const events = new EventSource(`/api/sessions/${sessionId}/events`);
 
     events.addEventListener("session", (event) => {
@@ -162,37 +192,64 @@ function SessionView({ sessionId }: { sessionId: string }) {
     ].join(" ");
   }, [uploadUrl]);
 
-  async function parseCsv(csv: string) {
+  function parseCsv(csv: string) {
     setParseError(null);
     try {
-      const parsed = Papa.parse<Record<string, string>>(csv, {
-        header: true,
-        skipEmptyLines: "greedy",
-        transformHeader: (header) => header.trim()
-      });
+      const nextTable = parseCsvTable(csv);
 
-      if (parsed.errors.length) {
-        const first = parsed.errors[0];
-        throw new Error(`${first.message}${first.row !== undefined ? ` at row ${first.row + 1}` : ""}.`);
-      }
+      setTable((previousTable) => {
+        if (!previousTable) {
+          setReview(null);
+          return nextTable;
+        }
 
-      const columns = parsed.meta.fields?.filter(Boolean) ?? [];
-      const rows = parsed.data.filter((row) => Object.values(row).some((value) => String(value ?? "").trim()));
-
-      if (!columns.length) {
-        throw new Error("The CSV header row is empty.");
-      }
-
-      setTable({
-        columns,
-        rows,
-        types: inferColumnTypes(columns, rows),
-        warnings: buildWarnings(columns, rows)
+        const summary = summarizeDiff(diffTables(previousTable, nextTable));
+        setReview({
+          previousTable,
+          currentTable: nextTable,
+          summary,
+          activeSummaryId: summary[0]?.id ?? null,
+          activeGroup: null,
+          highlightsCleared: false
+        });
+        return nextTable;
       });
     } catch (err) {
       setTable(null);
+      setReview(null);
       setParseError(err instanceof Error ? err.message : "CSV parsing failed.");
     }
+  }
+
+  function setActiveSummary(id: string) {
+    queueReviewScroll(id);
+    setReview((current) => (current ? { ...current, activeSummaryId: id, highlightsCleared: false } : current));
+  }
+
+  function setActiveGroup(group: string | null) {
+    setReview((current) => (current ? { ...current, activeGroup: current.activeGroup === group ? null : group } : current));
+  }
+
+  function moveActiveSummary(direction: -1 | 1) {
+    if (!review?.summary.length) {
+      return;
+    }
+
+    const activeIndex = Math.max(
+      0,
+      review.summary.findIndex((item) => item.id === review.activeSummaryId)
+    );
+    const nextIndex = (activeIndex + direction + review.summary.length) % review.summary.length;
+    setActiveSummary(review.summary[nextIndex].id);
+  }
+
+  function clearHighlights() {
+    setReview((current) => (current ? { ...current, highlightsCleared: true } : current));
+  }
+
+  function queueReviewScroll(summaryId: string) {
+    scrollSequence.current += 1;
+    setScrollRequest({ summaryId, sequence: scrollSequence.current });
   }
 
   async function copy(label: string, value: string) {
@@ -311,7 +368,18 @@ function SessionView({ sessionId }: { sessionId: string }) {
       </section>
 
       {table ? (
-        <TablePreview table={table} filename={csvEvent?.filename} />
+        <>
+          {review ? (
+            <ChangeReviewBar
+              review={review}
+              onSetActiveSummary={setActiveSummary}
+              onSetActiveGroup={setActiveGroup}
+              onMoveActiveSummary={moveActiveSummary}
+              onClearHighlights={clearHighlights}
+            />
+          ) : null}
+          <TablePreview table={table} review={review} scrollRequest={scrollRequest} filename={csvEvent?.filename} />
+        </>
       ) : (
         <section className="empty-preview">
           <FileSpreadsheet size={44} />
@@ -370,13 +438,139 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function TablePreview({ table, filename }: { table: ParsedTable; filename?: string | null }) {
+function ChangeReviewBar({
+  review,
+  onSetActiveSummary,
+  onSetActiveGroup,
+  onMoveActiveSummary,
+  onClearHighlights
+}: {
+  review: ReviewState;
+  onSetActiveSummary: (id: string) => void;
+  onSetActiveGroup: (group: string | null) => void;
+  onMoveActiveSummary: (direction: -1 | 1) => void;
+  onClearHighlights: () => void;
+}) {
+  const activeIndex = Math.max(
+    0,
+    review.summary.findIndex((item) => item.id === review.activeSummaryId)
+  );
+  const visibleDetails = review.activeGroup ? review.summary.filter((item) => groupForSummary(item.kind) === review.activeGroup) : review.summary;
+
+  return (
+    <section className={`change-review ${review.highlightsCleared ? "change-review--cleared" : ""}`} aria-label="CSV change review">
+      <div className="change-review__top">
+        <span className="change-review__updated">Changes from previous upload</span>
+        <div className="change-review__chips">
+          {review.summary.map((item) => {
+            const group = groupForSummary(item.kind);
+            return (
+              <button
+                className={`change-chip change-chip--${group}`}
+                aria-pressed={review.activeGroup === group}
+                data-active={review.activeGroup === group}
+                key={item.id}
+                type="button"
+                onClick={() => onSetActiveGroup(group)}
+              >
+                {chipLabel(item)}
+              </button>
+            );
+          })}
+        </div>
+        <div className="change-review__nav">
+          <button
+            className="icon-button"
+            type="button"
+            title="Previous change"
+            aria-label="Previous change"
+            onClick={() => onMoveActiveSummary(-1)}
+          >
+            ‹
+          </button>
+          <span>{review.summary.length ? `${activeIndex + 1} of ${review.summary.length}` : "0 of 0"}</span>
+          <button
+            className="icon-button"
+            type="button"
+            title="Next change"
+            aria-label="Next change"
+            onClick={() => onMoveActiveSummary(1)}
+          >
+            ›
+          </button>
+          <button className="clear-button" type="button" onClick={onClearHighlights}>
+            Clear Highlights
+          </button>
+        </div>
+      </div>
+      {review.highlightsCleared ? <p className="change-review__cleared">Highlights cleared. The table is showing the current Working CSV Version.</p> : null}
+      <div className="change-review__details">
+        {visibleDetails.map((item) => (
+          <button
+            className="change-detail"
+            aria-current={review.activeSummaryId === item.id ? "true" : undefined}
+            data-active={review.activeSummaryId === item.id}
+            key={item.id}
+            type="button"
+            onClick={() => onSetActiveSummary(item.id)}
+          >
+            <span>{item.label}</span>
+            <strong>{detailBadge(item.kind)}</strong>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TablePreview({
+  table,
+  review,
+  scrollRequest,
+  filename
+}: {
+  table: ParsedTable;
+  review: ReviewState | null;
+  scrollRequest: ReviewScrollRequest | null;
+  filename?: string | null;
+}) {
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const visibleColumnNames = useMemo(() => visibleColumns(table), [table]);
+  const removedColumnNames = useMemo(() => removedColumns(review), [review]);
+  const removedColumnSet = useMemo(() => new Set(removedColumnNames), [removedColumnNames]);
+  const removedGhostRows = useMemo(() => removedRows(review), [review]);
+  const previousRowsById = useMemo(() => {
+    const rowsById = new Map<string, ParsedTable["rows"][number]>();
+    for (const row of review?.previousTable.rows ?? []) {
+      rowsById.set(String(row[rowIdColumn] ?? ""), row);
+    }
+    return rowsById;
+  }, [review]);
+  const columns = useMemo(
+    () => [
+      ...visibleColumnNames,
+      ...removedColumnNames.filter((column) => !visibleColumnNames.includes(column))
+    ],
+    [visibleColumnNames, removedColumnNames]
+  );
+  const reviewTargets = useMemo(() => buildReviewTargetLookup(review), [review]);
+
+  useEffect(() => {
+    if (!review || review.highlightsCleared || !scrollRequest) {
+      return;
+    }
+
+    const target = firstReviewScrollTarget(review.summary, scrollRequest.summaryId);
+    const targetElement = target ? findReviewTargetElement(tableScrollRef.current, target) : null;
+    targetElement?.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+  }, [review, scrollRequest]);
+
   return (
     <section className="preview-panel" aria-label="Current CSV table">
       <div className="preview-heading">
         <div>
           <h2>{filename ?? "Current Working CSV Version"}</h2>
-          <p>{table.columns.map((column) => `${column}: ${table.types[column]}`).join(" · ")}</p>
+          <p>{columns.map((column) => `${column}: ${columnType(table, review, column)}`).join(" · ")}</p>
         </div>
       </div>
       {table.warnings.length ? (
@@ -386,28 +580,71 @@ function TablePreview({ table, filename }: { table: ParsedTable; filename?: stri
           ))}
         </div>
       ) : null}
-      <div className="table-scroll">
+      <div className="table-scroll" ref={tableScrollRef}>
         <table>
           <thead>
             <tr>
               <th className="row-number">#</th>
-              {table.columns.map((column) => (
-                <th key={column}>
+              {columns.map((column) => (
+                <th
+                  className={columnHeaderClass(reviewTargets, column, removedColumnSet.has(column))}
+                  data-review-column={column}
+                  key={column}
+                >
                   <span>{column}</span>
-                  <small>{table.types[column]}</small>
+                  <small>{columnType(table, review, column)}</small>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {table.rows.map((row, index) => (
-              <tr key={index}>
-                <td className="row-number">{index + 1}</td>
-                {table.columns.map((column) => (
-                  <td key={column}>{String(row[column] ?? "")}</td>
-                ))}
-              </tr>
-            ))}
+            {table.rows.map((row, index) => {
+              const rowId = String(row[rowIdColumn] ?? "");
+              return (
+                <tr data-review-row={rowId} key={rowId || index}>
+                  <td className="row-number">{index + 1}</td>
+                  {columns.map((column) => {
+                    const isRemovedColumn = removedColumnSet.has(column);
+                    return (
+                      <td
+                        className={cellClass(
+                          reviewTargets,
+                          rowId,
+                          column,
+                          isRemovedColumn ? "review-cell review-cell--delete review-column--removed" : ""
+                        )}
+                        data-review-column={column}
+                        data-review-row={rowId}
+                        key={column}
+                      >
+                        {String(isRemovedColumn ? previousRowsById.get(rowId)?.[column] ?? "" : row[column] ?? "")}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+            {removedGhostRows.map((row, index) => {
+              const rowId = String(row[rowIdColumn] ?? "");
+              return (
+                <tr className="review-row--removed" data-review-row={rowId} key={`removed:${rowId || index}`}>
+                  <td className="row-number">−</td>
+                  {columns.map((column) => (
+                    <td
+                      className={removedGhostCellClass({
+                        isActiveRow: reviewTargets.activeRows.has(rowId),
+                        isRemovedColumn: removedColumnSet.has(column)
+                      })}
+                      data-review-column={column}
+                      data-review-row={rowId}
+                      key={column}
+                    >
+                      {String(row[column] ?? "")}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -445,47 +682,6 @@ function getSessionSecrets(sessionId: string) {
   }
 }
 
-function inferColumnTypes(columns: string[], rows: Record<string, string>[]) {
-  return Object.fromEntries(
-    columns.map((column) => {
-      const values = rows.map((row) => String(row[column] ?? "").trim()).filter(Boolean);
-      return [column, inferType(values)];
-    })
-  );
-}
-
-function inferType(values: string[]) {
-  if (!values.length) {
-    return "empty";
-  }
-
-  const sample = values.slice(0, 500);
-  if (sample.every((value) => /^(true|false|yes|no)$/i.test(value))) {
-    return "boolean";
-  }
-  if (sample.every((value) => /^-?\d+$/.test(value))) {
-    return "integer";
-  }
-  if (sample.every((value) => value !== "" && Number.isFinite(Number(value)))) {
-    return "number";
-  }
-  if (sample.every((value) => !Number.isNaN(Date.parse(value)))) {
-    return "date";
-  }
-  return "text";
-}
-
-function buildWarnings(columns: string[], rows: Record<string, string>[]) {
-  const warnings: string[] = [];
-  if (columns.length > 100) {
-    warnings.push("Wide CSV: the browser is rendering every column for this POC.");
-  }
-  if (rows.length > 10_000) {
-    warnings.push("Large CSV: the browser is rendering every row for this POC.");
-  }
-  return warnings;
-}
-
 function connectionLabel(connection: ConnectionState) {
   if (connection === "live") {
     return "Live";
@@ -515,6 +711,219 @@ function formatBytes(value: number) {
     unit = units[index];
   }
   return `${size.toFixed(size >= 10 ? 1 : 2)} ${unit}`;
+}
+
+function groupForSummary(kind: ChangeSummaryItem["kind"]) {
+  if (kind === "column_added") {
+    return "schema";
+  }
+  if (kind === "column_removed" || kind === "rows_removed") {
+    return "delete";
+  }
+  if (kind === "rows_added") {
+    return "add";
+  }
+  if (kind === "column_modified" || kind === "cells_modified") {
+    return "modify";
+  }
+  return "neutral";
+}
+
+function chipLabel(item: ChangeSummaryItem) {
+  if (item.kind === "column_added") {
+    return `+${item.count} ${item.count === 1 ? "column" : "columns"}`;
+  }
+  if (item.kind === "column_removed") {
+    return `-${item.count} ${item.count === 1 ? "column" : "columns"}`;
+  }
+  if (item.kind === "rows_added") {
+    return `+${item.count} ${item.count === 1 ? "row" : "rows"}`;
+  }
+  if (item.kind === "rows_removed") {
+    return `-${item.count} ${item.count === 1 ? "row" : "rows"}`;
+  }
+  if (item.kind === "column_modified") {
+    return `${item.count} ${item.count === 1 ? "cell" : "cells"} in column groups`;
+  }
+  if (item.kind === "cells_modified") {
+    return `${item.count} ${item.count === 1 ? "cell" : "cells"} modified`;
+  }
+  return item.label;
+}
+
+function detailBadge(kind: ChangeSummaryItem["kind"]) {
+  if (kind === "column_added") {
+    return "schema";
+  }
+  if (kind === "rows_added") {
+    return "add";
+  }
+  if (kind === "column_removed" || kind === "rows_removed") {
+    return "delete";
+  }
+  if (kind === "column_modified" || kind === "cells_modified") {
+    return "modify";
+  }
+  return "info";
+}
+
+function removedColumns(review: ReviewState | null) {
+  if (!review || review.highlightsCleared) {
+    return [];
+  }
+  return review.summary.flatMap((item) =>
+    item.kind === "column_removed"
+      ? item.targets.flatMap((target) => (target.kind === "column" ? [target.column] : []))
+      : []
+  );
+}
+
+function removedRows(review: ReviewState | null) {
+  if (!review || review.highlightsCleared) {
+    return [];
+  }
+  const removedIds = new Set(
+    review.summary.flatMap((item) =>
+      item.kind === "rows_removed"
+        ? item.targets.flatMap((target) => (target.kind === "row" ? [target.rowId] : []))
+        : []
+    )
+  );
+  return review.previousTable.rows.filter((row) => removedIds.has(String(row[rowIdColumn] ?? "")));
+}
+
+function columnType(table: ParsedTable, review: ReviewState | null, column: string) {
+  return table.types[column] ?? review?.previousTable.types[column] ?? "";
+}
+
+function buildReviewTargetLookup(review: ReviewState | null): ReviewTargetLookup {
+  const lookup: ReviewTargetLookup = {
+    columnGroups: new Map(),
+    rowGroups: new Map(),
+    cellGroups: new Map(),
+    activeColumns: new Set(),
+    activeRows: new Set(),
+    activeCells: new Set()
+  };
+
+  if (!review || review.highlightsCleared) {
+    return lookup;
+  }
+
+  for (const item of review.summary) {
+    const group = groupForSummary(item.kind);
+    const isActive = item.id === review.activeSummaryId;
+
+    for (const target of item.targets) {
+      if (target.kind === "column") {
+        addGroup(lookup.columnGroups, target.column, group);
+        if (isActive) {
+          lookup.activeColumns.add(target.column);
+        }
+      } else if (target.kind === "row") {
+        addGroup(lookup.rowGroups, target.rowId, group);
+        if (isActive) {
+          lookup.activeRows.add(target.rowId);
+        }
+      } else {
+        const key = cellKey(target.rowId, target.column);
+        addGroup(lookup.cellGroups, key, group);
+        if (isActive) {
+          lookup.activeCells.add(key);
+        }
+      }
+    }
+  }
+
+  return lookup;
+}
+
+function columnHeaderClass(lookup: ReviewTargetLookup, column: string, isRemovedColumn = false) {
+  const groups = lookup.columnGroups.get(column);
+  const classes = classesForGroups(groups);
+  if (isRemovedColumn) {
+    classes.push("review-cell", "review-cell--delete", "review-column--removed");
+  }
+  if (lookup.activeColumns.has(column)) {
+    classes.push("review-cell--active");
+  }
+  return classes.join(" ");
+}
+
+function cellClass(lookup: ReviewTargetLookup, rowId: string, column: string, baseClass = "") {
+  const key = cellKey(rowId, column);
+  const groups = new Set<string>();
+  mergeGroups(groups, lookup.cellGroups.get(key));
+  mergeGroups(groups, lookup.columnGroups.get(column));
+  mergeGroups(groups, lookup.rowGroups.get(rowId));
+
+  const classes = [baseClass, ...classesForGroups(groups)];
+  classes.push(
+    activeCellClass({
+      isActiveCell: lookup.activeCells.has(key),
+      isActiveColumn: lookup.activeColumns.has(column),
+      isActiveRow: lookup.activeRows.has(rowId)
+    })
+  );
+
+  return classes.filter(Boolean).join(" ");
+}
+
+function findReviewTargetElement(root: HTMLElement | null, target: ChangeTarget) {
+  if (!root) {
+    return null;
+  }
+
+  if (target.kind === "column") {
+    return findFirstByDataset(root, "reviewColumn", target.column);
+  }
+
+  if (target.kind === "row") {
+    return findFirstByDataset(root, "reviewRow", target.rowId);
+  }
+
+  return findCellByReviewTarget(root, target.rowId, target.column);
+}
+
+function findFirstByDataset(root: HTMLElement, key: "reviewColumn" | "reviewRow", value: string) {
+  return Array.from(root.querySelectorAll<HTMLElement>(`[data-${key === "reviewColumn" ? "review-column" : "review-row"}]`)).find(
+    (element) => element.dataset[key] === value
+  ) ?? null;
+}
+
+function findCellByReviewTarget(root: HTMLElement, rowId: string, column: string) {
+  return Array.from(root.querySelectorAll<HTMLElement>("[data-review-row][data-review-column]")).find(
+    (element) => element.dataset.reviewRow === rowId && element.dataset.reviewColumn === column
+  ) ?? null;
+}
+
+function classesForGroups(groups: Set<string> | undefined) {
+  if (!groups?.size) {
+    return [];
+  }
+  return ["review-cell", ...Array.from(groups, (group) => `review-cell--${group}`)];
+}
+
+function addGroup(groupsByTarget: Map<string, Set<string>>, target: string, group: string) {
+  const groups = groupsByTarget.get(target);
+  if (groups) {
+    groups.add(group);
+  } else {
+    groupsByTarget.set(target, new Set([group]));
+  }
+}
+
+function mergeGroups(target: Set<string>, source: Set<string> | undefined) {
+  if (!source) {
+    return;
+  }
+  for (const group of source) {
+    target.add(group);
+  }
+}
+
+function cellKey(rowId: string, column: string) {
+  return `${rowId}\u0000${column}`;
 }
 
 function formatTime(value: string) {

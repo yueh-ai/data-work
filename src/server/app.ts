@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 
 import express, { type Request, type Response } from "express";
 
+import { CsvRowUploadError, normalizeUploadedCsv } from "./csvRows.js";
+
 type Session = {
   id: string;
   createdAt: string;
@@ -161,14 +163,29 @@ export async function createApp(options: CreateAppOptions = {}) {
         return;
       }
 
+      let normalizedCsv: string;
+      try {
+        normalizedCsv = normalizeUploadedCsv(csv, !session.latestCsv);
+      } catch (err) {
+        if (err instanceof CsvRowUploadError) {
+          res.status(400).json({
+            error: err.code,
+            message: err.message,
+            ...(err.detail ? { detail: err.detail } : {})
+          });
+          return;
+        }
+        throw err;
+      }
+
       const notice: UploadNotice = {
         uploadedAt: new Date().toISOString(),
         filename: parseFilename(req.get("content-disposition")),
-        bytes: body.length,
-        csv
+        bytes: Buffer.byteLength(normalizedCsv, "utf8"),
+        csv: normalizedCsv
       };
 
-      session.latestCsv = csv;
+      session.latestCsv = normalizedCsv;
       session.latestUpload = notice;
 
       for (const viewer of session.viewers) {
