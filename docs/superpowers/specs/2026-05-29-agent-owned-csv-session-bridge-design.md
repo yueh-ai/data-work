@@ -54,7 +54,7 @@ The backend must not retain CSV bytes from agent Working CSV uploads after those
 3. User uploads a source CSV through the UI.
 4. UI waits while the backend prepares the preview.
 5. Backend validates the CSV enough for preview coordination, adds `_row_id` if missing, preserves and validates `_row_id` if present, and stores the normalized pending handoff in memory.
-6. Backend sets `expiresAt` to 30 minutes after upload and emits a handoff preview event to connected viewers.
+6. Backend sets `expiresAt` to 30 minutes after upload and emits a CSV event to connected viewers.
 7. UI renders the normalized handoff preview, hiding `_row_id`, and shows that the source file is waiting for agent import.
 8. Agent polls or requests `GET /api/sessions/:sessionId/handoff/csv`.
 9. Agent saves the normalized handoff CSV into the Python Workspace and verifies it can be read.
@@ -128,7 +128,7 @@ Behavior:
 - Preserves and validates `_row_id` if present.
 - Replaces any existing pending handoff for the session.
 - Stores the normalized CSV in memory for 30 minutes.
-- Emits a `csv-preview` SSE event with `role: "handoff"`.
+- Emits a `csv` SSE event with the normalized handoff CSV and `expiresAt`.
 
 Download the pending handoff CSV:
 
@@ -165,7 +165,7 @@ Behavior:
 - Accepts CSV bytes from the agent.
 - Requires `_row_id`.
 - Validates `_row_id` values are present and unique.
-- Emits a `csv-preview` SSE event with `role: "working"`.
+- Emits a `csv` SSE event with the Working CSV.
 - Discards CSV bytes after the request has been handled.
 
 ## SSE Events
@@ -180,11 +180,10 @@ type SessionEvent = {
 };
 ```
 
-CSV preview events use one shape for handoff and working previews:
+CSV events carry renderable CSV bytes to connected viewers:
 
 ```ts
-type CsvPreviewEvent = {
-  role: "handoff" | "working";
+type CsvEvent = {
   uploadedAt: string;
   filename: string | null;
   bytes: number;
@@ -193,7 +192,9 @@ type CsvPreviewEvent = {
 };
 ```
 
-On reconnect, the backend may replay a pending handoff preview because it still owns that temporary handoff copy. It must not replay the latest agent Working CSV Version because those bytes are not retained.
+`expiresAt` is present only for pending handoff CSVs. The UI can use that field when it needs to show that the rendered CSV is waiting for agent import.
+
+On reconnect, the backend may replay a pending handoff CSV because it still owns that temporary handoff copy. It must not replay the latest agent Working CSV Version because those bytes are not retained.
 
 ## Row Identity
 
@@ -229,12 +230,12 @@ For browser upload:
 
 1. UI sends the raw file to `PUT /handoff`.
 2. UI shows a preparation state and does not render the raw local file.
-3. UI waits for the normalized `csv-preview` SSE event.
+3. UI waits for the normalized `csv` SSE event.
 4. UI renders the normalized CSV and hides `_row_id`.
 
 For working preview:
 
-1. UI receives the `csv-preview` SSE event from `/working`.
+1. UI receives the `csv` SSE event from `/working`.
 2. UI parses and renders the CSV.
 3. UI compares against the previous browser-held table when available.
 
