@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -16,9 +16,10 @@ import {
   Upload
 } from "lucide-react";
 
-import { summarizeDiff, type ChangeSummaryItem } from "./changeSummary.js";
+import { summarizeDiff, type ChangeSummaryItem, type ChangeTarget } from "./changeSummary.js";
 import { diffTables } from "./csvDiff.js";
 import { parseCsvTable, type ParsedTable, rowIdColumn, visibleColumns } from "./csvTable.js";
+import { activeCellClass, firstReviewScrollTarget, removedGhostCellClass } from "./reviewClassNames.js";
 import "./styles.css";
 
 type SessionCreateResponse = {
@@ -61,6 +62,11 @@ type ReviewTargetLookup = {
   activeColumns: Set<string>;
   activeRows: Set<string>;
   activeCells: Set<string>;
+};
+
+type ReviewScrollRequest = {
+  summaryId: string;
+  sequence: number;
 };
 
 const root = createRoot(document.getElementById("root") as HTMLElement);
@@ -136,9 +142,11 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const [csvEvent, setCsvEvent] = useState<CsvEvent | null>(null);
   const [table, setTable] = useState<ParsedTable | null>(null);
   const [review, setReview] = useState<ReviewState | null>(null);
+  const [scrollRequest, setScrollRequest] = useState<ReviewScrollRequest | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const scrollSequence = useRef(0);
   const secrets = getSessionSecrets(sessionId);
 
   useEffect(() => {
@@ -147,6 +155,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     setCsvEvent(null);
     setTable(null);
     setReview(null);
+    setScrollRequest(null);
     setParseError(null);
     setCopyState(null);
     setUploading(false);
@@ -213,6 +222,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   }
 
   function setActiveSummary(id: string) {
+    queueReviewScroll(id);
     setReview((current) => (current ? { ...current, activeSummaryId: id, highlightsCleared: false } : current));
   }
 
@@ -221,21 +231,25 @@ function SessionView({ sessionId }: { sessionId: string }) {
   }
 
   function moveActiveSummary(direction: -1 | 1) {
-    setReview((current) => {
-      if (!current || !current.summary.length) {
-        return current;
-      }
-      const activeIndex = Math.max(
-        0,
-        current.summary.findIndex((item) => item.id === current.activeSummaryId)
-      );
-      const nextIndex = (activeIndex + direction + current.summary.length) % current.summary.length;
-      return { ...current, activeSummaryId: current.summary[nextIndex].id, highlightsCleared: false };
-    });
+    if (!review?.summary.length) {
+      return;
+    }
+
+    const activeIndex = Math.max(
+      0,
+      review.summary.findIndex((item) => item.id === review.activeSummaryId)
+    );
+    const nextIndex = (activeIndex + direction + review.summary.length) % review.summary.length;
+    setActiveSummary(review.summary[nextIndex].id);
   }
 
   function clearHighlights() {
     setReview((current) => (current ? { ...current, highlightsCleared: true } : current));
+  }
+
+  function queueReviewScroll(summaryId: string) {
+    scrollSequence.current += 1;
+    setScrollRequest({ summaryId, sequence: scrollSequence.current });
   }
 
   async function copy(label: string, value: string) {
@@ -364,7 +378,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
               onClearHighlights={clearHighlights}
             />
           ) : null}
-          <TablePreview table={table} review={review} filename={csvEvent?.filename} />
+          <TablePreview table={table} review={review} scrollRequest={scrollRequest} filename={csvEvent?.filename} />
         </>
       ) : (
         <section className="empty-preview">
@@ -509,7 +523,18 @@ function ChangeReviewBar({
   );
 }
 
-function TablePreview({ table, review, filename }: { table: ParsedTable; review: ReviewState | null; filename?: string | null }) {
+function TablePreview({
+  table,
+  review,
+  scrollRequest,
+  filename
+}: {
+  table: ParsedTable;
+  review: ReviewState | null;
+  scrollRequest: ReviewScrollRequest | null;
+  filename?: string | null;
+}) {
+  const tableScrollRef = useRef<HTMLDivElement>(null);
   const visibleColumnNames = useMemo(() => visibleColumns(table), [table]);
   const removedColumnNames = useMemo(() => removedColumns(review), [review]);
   const removedColumnSet = useMemo(() => new Set(removedColumnNames), [removedColumnNames]);
@@ -530,6 +555,16 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
   );
   const reviewTargets = useMemo(() => buildReviewTargetLookup(review), [review]);
 
+  useEffect(() => {
+    if (!review || review.highlightsCleared || !scrollRequest) {
+      return;
+    }
+
+    const target = firstReviewScrollTarget(review.summary, scrollRequest.summaryId);
+    const targetElement = target ? findReviewTargetElement(tableScrollRef.current, target) : null;
+    targetElement?.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+  }, [review, scrollRequest]);
+
   return (
     <section className="preview-panel" aria-label="Current CSV table">
       <div className="preview-heading">
@@ -545,7 +580,7 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
           ))}
         </div>
       ) : null}
-      <div className="table-scroll">
+      <div className="table-scroll" ref={tableScrollRef}>
         <table>
           <thead>
             <tr>
@@ -553,6 +588,7 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
               {columns.map((column) => (
                 <th
                   className={columnHeaderClass(reviewTargets, column, removedColumnSet.has(column))}
+                  data-review-column={column}
                   key={column}
                 >
                   <span>{column}</span>
@@ -565,7 +601,7 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
             {table.rows.map((row, index) => {
               const rowId = String(row[rowIdColumn] ?? "");
               return (
-                <tr key={rowId || index}>
+                <tr data-review-row={rowId} key={rowId || index}>
                   <td className="row-number">{index + 1}</td>
                   {columns.map((column) => {
                     const isRemovedColumn = removedColumnSet.has(column);
@@ -577,6 +613,8 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
                           column,
                           isRemovedColumn ? "review-cell review-cell--delete review-column--removed" : ""
                         )}
+                        data-review-column={column}
+                        data-review-row={rowId}
                         key={column}
                       >
                         {String(isRemovedColumn ? previousRowsById.get(rowId)?.[column] ?? "" : row[column] ?? "")}
@@ -589,11 +627,16 @@ function TablePreview({ table, review, filename }: { table: ParsedTable; review:
             {removedGhostRows.map((row, index) => {
               const rowId = String(row[rowIdColumn] ?? "");
               return (
-                <tr className="review-row--removed" key={`removed:${rowId || index}`}>
+                <tr className="review-row--removed" data-review-row={rowId} key={`removed:${rowId || index}`}>
                   <td className="row-number">−</td>
                   {columns.map((column) => (
                     <td
-                      className={`review-cell review-cell--delete${removedColumnSet.has(column) ? " review-column--removed" : ""}`}
+                      className={removedGhostCellClass({
+                        isActiveRow: reviewTargets.activeRows.has(rowId),
+                        isRemovedColumn: removedColumnSet.has(column)
+                      })}
+                      data-review-column={column}
+                      data-review-row={rowId}
                       key={column}
                     >
                       {String(row[column] ?? "")}
@@ -815,11 +858,43 @@ function cellClass(lookup: ReviewTargetLookup, rowId: string, column: string, ba
   mergeGroups(groups, lookup.rowGroups.get(rowId));
 
   const classes = [baseClass, ...classesForGroups(groups)];
-  if (lookup.activeCells.has(key) || lookup.activeColumns.has(column) || lookup.activeRows.has(rowId)) {
-    classes.push("review-cell--active");
-  }
+  classes.push(
+    activeCellClass({
+      isActiveCell: lookup.activeCells.has(key),
+      isActiveColumn: lookup.activeColumns.has(column),
+      isActiveRow: lookup.activeRows.has(rowId)
+    })
+  );
 
   return classes.filter(Boolean).join(" ");
+}
+
+function findReviewTargetElement(root: HTMLElement | null, target: ChangeTarget) {
+  if (!root) {
+    return null;
+  }
+
+  if (target.kind === "column") {
+    return findFirstByDataset(root, "reviewColumn", target.column);
+  }
+
+  if (target.kind === "row") {
+    return findFirstByDataset(root, "reviewRow", target.rowId);
+  }
+
+  return findCellByReviewTarget(root, target.rowId, target.column);
+}
+
+function findFirstByDataset(root: HTMLElement, key: "reviewColumn" | "reviewRow", value: string) {
+  return Array.from(root.querySelectorAll<HTMLElement>(`[data-${key === "reviewColumn" ? "review-column" : "review-row"}]`)).find(
+    (element) => element.dataset[key] === value
+  ) ?? null;
+}
+
+function findCellByReviewTarget(root: HTMLElement, rowId: string, column: string) {
+  return Array.from(root.querySelectorAll<HTMLElement>("[data-review-row][data-review-column]")).find(
+    (element) => element.dataset.reviewRow === rowId && element.dataset.reviewColumn === column
+  ) ?? null;
 }
 
 function classesForGroups(groups: Set<string> | undefined) {
