@@ -76,6 +76,9 @@ test("no-change and reversal previews leave the verified baseline unchanged", ()
   assert.strictEqual(state.latestTable, equivalentA);
   assert.equal(buildOutstandingReview(state), null);
 
+  state = verifyLatestTable(state);
+  assert.strictEqual(state.verifiedBaseline, tableA);
+
   state = receiveLatestTable(state, tableB);
   assert.ok(buildOutstandingReview(state));
   state = receiveLatestTable(state, equivalentA);

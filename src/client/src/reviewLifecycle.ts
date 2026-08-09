@@ -42,6 +42,13 @@ export function verifyLatestTable(state: ReviewLifecycleState): ReviewLifecycleS
     return state;
   }
 
+  if (
+    state.verifiedBaseline &&
+    summarizeDiff(diffTables(state.verifiedBaseline, state.latestTable))[0].kind === "no_change"
+  ) {
+    return state;
+  }
+
   return {
     verifiedBaseline: state.latestTable,
     latestTable: state.latestTable
