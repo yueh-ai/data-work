@@ -16,9 +16,16 @@ import {
   Upload
 } from "lucide-react";
 
-import { summarizeDiff, type ChangeSummaryItem, type ChangeTarget } from "./changeSummary.js";
-import { diffTables } from "./csvDiff.js";
+import type { ChangeSummaryItem, ChangeTarget } from "./changeSummary.js";
 import { parseCsvTable, type ParsedTable, rowIdColumn, visibleColumns } from "./csvTable.js";
+import {
+  buildOutstandingReview,
+  emptyReviewLifecycle,
+  receiveLatestTable,
+  verifyLatestTable,
+  type OutstandingReview,
+  type ReviewLifecycleState
+} from "./reviewLifecycle.js";
 import { activeCellClass, firstReviewScrollTarget, removedGhostCellClass } from "./reviewClassNames.js";
 import "./styles.css";
 
@@ -59,14 +66,19 @@ type PreviewEvent = (HandoffPreviewEvent & { kind: "handoff"; handoffStatus: Han
 
 type ConnectionState = "idle" | "connecting" | "live" | "error";
 
-type ReviewState = {
-  previousTable: ParsedTable;
-  currentTable: ParsedTable;
-  summary: ChangeSummaryItem[];
+type ReviewPresentationState = {
   activeSummaryId: string | null;
   activeGroup: string | null;
-  highlightsCleared: boolean;
 };
+
+type ReviewState = OutstandingReview & ReviewPresentationState;
+
+function emptyReviewPresentation(): ReviewPresentationState {
+  return {
+    activeSummaryId: null,
+    activeGroup: null
+  };
+}
 
 type ReviewTargetLookup = {
   columnGroups: Map<string, Set<string>>;
@@ -153,21 +165,43 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const [session, setSession] = useState<SessionEvent | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [previewEvent, setPreviewEvent] = useState<PreviewEvent | null>(null);
-  const [table, setTable] = useState<ParsedTable | null>(null);
-  const [review, setReview] = useState<ReviewState | null>(null);
+  const [reviewLifecycle, setReviewLifecycle] = useState<ReviewLifecycleState>(emptyReviewLifecycle);
+  const [reviewPresentation, setReviewPresentation] = useState<ReviewPresentationState>(emptyReviewPresentation);
   const [scrollRequest, setScrollRequest] = useState<ReviewScrollRequest | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const scrollSequence = useRef(0);
   const secrets = getSessionSecrets(sessionId);
+  const table = reviewLifecycle.latestTable;
+  const outstandingReview = useMemo(
+    () => buildOutstandingReview(reviewLifecycle),
+    [reviewLifecycle]
+  );
+  const review = useMemo<ReviewState | null>(() => {
+    if (!outstandingReview) {
+      return null;
+    }
+
+    const activeSummaryId = outstandingReview.summary.some(
+      (item) => item.id === reviewPresentation.activeSummaryId
+    )
+      ? reviewPresentation.activeSummaryId
+      : outstandingReview.summary[0]?.id ?? null;
+
+    return {
+      ...outstandingReview,
+      ...reviewPresentation,
+      activeSummaryId
+    };
+  }, [outstandingReview, reviewPresentation]);
 
   useEffect(() => {
     setSession(null);
     setConnection("connecting");
     setPreviewEvent(null);
-    setTable(null);
-    setReview(null);
+    setReviewLifecycle(emptyReviewLifecycle());
+    setReviewPresentation(emptyReviewPresentation());
     setScrollRequest(null);
     setParseError(null);
     setCopyState(null);
@@ -181,17 +215,15 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
     events.addEventListener("handoff-preview", (event) => {
       const next = JSON.parse((event as MessageEvent).data) as HandoffPreviewEvent;
-      setPreviewEvent({ ...next, kind: "handoff", handoffStatus: "pending" });
       setSession((current) => (current ? { ...current, pendingHandoff: true } : current));
       setUploading(false);
-      parseCsv(next.csv);
+      acceptPreview({ ...next, kind: "handoff", handoffStatus: "pending" });
     });
 
     events.addEventListener("working-preview", (event) => {
       const next = JSON.parse((event as MessageEvent).data) as WorkingPreviewEvent;
-      setPreviewEvent({ ...next, kind: "working" });
       setUploading(false);
-      parseCsv(next.csv);
+      acceptPreview({ ...next, kind: "working" });
     });
 
     events.addEventListener("handoff-cleared", () => {
@@ -226,42 +258,30 @@ function SessionView({ sessionId }: { sessionId: string }) {
     ].join(" ");
   }, [workingUploadUrl]);
 
-  function parseCsv(csv: string) {
+  function acceptPreview(nextPreview: PreviewEvent) {
     setParseError(null);
+
     try {
-      const nextTable = parseCsvTable(csv);
-
-      setTable((previousTable) => {
-        if (!previousTable) {
-          setReview(null);
-          return nextTable;
-        }
-
-        const summary = summarizeDiff(diffTables(previousTable, nextTable));
-        setReview({
-          previousTable,
-          currentTable: nextTable,
-          summary,
-          activeSummaryId: summary[0]?.id ?? null,
-          activeGroup: null,
-          highlightsCleared: false
-        });
-        return nextTable;
-      });
+      const nextTable = parseCsvTable(nextPreview.csv);
+      setReviewLifecycle((current) => receiveLatestTable(current, nextTable));
+      setReviewPresentation(emptyReviewPresentation());
+      setScrollRequest(null);
+      setPreviewEvent(nextPreview);
     } catch (err) {
-      setTable(null);
-      setReview(null);
       setParseError(err instanceof Error ? err.message : "CSV parsing failed.");
     }
   }
 
   function setActiveSummary(id: string) {
     queueReviewScroll(id);
-    setReview((current) => (current ? { ...current, activeSummaryId: id, highlightsCleared: false } : current));
+    setReviewPresentation((current) => ({ ...current, activeSummaryId: id }));
   }
 
   function setActiveGroup(group: string | null) {
-    setReview((current) => (current ? { ...current, activeGroup: current.activeGroup === group ? null : group } : current));
+    setReviewPresentation((current) => ({
+      ...current,
+      activeGroup: current.activeGroup === group ? null : group
+    }));
   }
 
   function moveActiveSummary(direction: -1 | 1) {
@@ -277,8 +297,10 @@ function SessionView({ sessionId }: { sessionId: string }) {
     setActiveSummary(review.summary[nextIndex].id);
   }
 
-  function clearHighlights() {
-    setReview((current) => (current ? { ...current, highlightsCleared: true } : current));
+  function verifyChanges() {
+    setReviewLifecycle((current) => verifyLatestTable(current));
+    setReviewPresentation(emptyReviewPresentation());
+    setScrollRequest(null);
   }
 
   function queueReviewScroll(summaryId: string) {
@@ -430,7 +452,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
               onSetActiveSummary={setActiveSummary}
               onSetActiveGroup={setActiveGroup}
               onMoveActiveSummary={moveActiveSummary}
-              onClearHighlights={clearHighlights}
+              onVerifyChanges={verifyChanges}
             />
           ) : null}
           <TablePreview table={table} review={review} scrollRequest={scrollRequest} filename={previewEvent?.filename} />
@@ -502,13 +524,13 @@ function ChangeReviewBar({
   onSetActiveSummary,
   onSetActiveGroup,
   onMoveActiveSummary,
-  onClearHighlights
+  onVerifyChanges
 }: {
   review: ReviewState;
   onSetActiveSummary: (id: string) => void;
   onSetActiveGroup: (group: string | null) => void;
   onMoveActiveSummary: (direction: -1 | 1) => void;
-  onClearHighlights: () => void;
+  onVerifyChanges: () => void;
 }) {
   const activeIndex = Math.max(
     0,
@@ -517,9 +539,9 @@ function ChangeReviewBar({
   const visibleDetails = review.activeGroup ? review.summary.filter((item) => groupForSummary(item.kind) === review.activeGroup) : review.summary;
 
   return (
-    <section className={`change-review ${review.highlightsCleared ? "change-review--cleared" : ""}`} aria-label="CSV change review">
+    <section className="change-review" aria-label="CSV change review">
       <div className="change-review__top">
-        <span className="change-review__updated">Changes from previous upload</span>
+        <span className="change-review__updated">Changes since last verification</span>
         <div className="change-review__chips">
           {review.summary.map((item) => {
             const group = groupForSummary(item.kind);
@@ -557,12 +579,11 @@ function ChangeReviewBar({
           >
             ›
           </button>
-          <button className="clear-button" type="button" onClick={onClearHighlights}>
-            Clear Highlights
+          <button className="verify-button" type="button" onClick={onVerifyChanges}>
+            Verify Changes
           </button>
         </div>
       </div>
-      {review.highlightsCleared ? <p className="change-review__cleared">Highlights cleared. The table is showing the current Working CSV Version.</p> : null}
       <div className="change-review__details">
         {visibleDetails.map((item) => (
           <button
@@ -615,7 +636,7 @@ function TablePreview({
   const reviewTargets = useMemo(() => buildReviewTargetLookup(review), [review]);
 
   useEffect(() => {
-    if (!review || review.highlightsCleared || !scrollRequest) {
+    if (!review || !scrollRequest) {
       return;
     }
 
@@ -841,7 +862,7 @@ function detailBadge(kind: ChangeSummaryItem["kind"]) {
 }
 
 function removedColumns(review: ReviewState | null) {
-  if (!review || review.highlightsCleared) {
+  if (!review) {
     return [];
   }
   return review.summary.flatMap((item) =>
@@ -852,7 +873,7 @@ function removedColumns(review: ReviewState | null) {
 }
 
 function removedRows(review: ReviewState | null) {
-  if (!review || review.highlightsCleared) {
+  if (!review) {
     return [];
   }
   const removedIds = new Set(
@@ -879,7 +900,7 @@ function buildReviewTargetLookup(review: ReviewState | null): ReviewTargetLookup
     activeCells: new Set()
   };
 
-  if (!review || review.highlightsCleared) {
+  if (!review) {
     return lookup;
   }
 

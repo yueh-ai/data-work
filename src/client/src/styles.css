@@ -492,7 +492,7 @@ td.row-number {
 }
 
 .change-chip,
-.clear-button,
+.verify-button,
 .change-detail {
   border: 1px solid transparent;
   border-radius: 8px;
@@ -531,7 +531,7 @@ td.row-number {
   background: #fff0ba;
 }
 
-.clear-button {
+.verify-button {
   min-height: 32px;
   padding: 0 11px;
   border-color: #cfd9d4;
@@ -574,13 +574,6 @@ td.row-number {
   background: #eef3ef;
   font-size: 0.68rem;
   text-transform: uppercase;
-}
-
-.change-review__cleared {
-  margin: 0;
-  color: #53635e;
-  font-size: 0.86rem;
-  font-weight: 750;
 }
 
 .review-cell {
