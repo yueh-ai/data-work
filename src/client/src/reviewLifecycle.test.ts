@@ -6,7 +6,8 @@ import {
   buildOutstandingReview,
   emptyReviewLifecycle,
   receiveLatestTable,
-  verifyLatestTable
+  verifyLatestTable,
+  verifyReviewSnapshot
 } from "./reviewLifecycle.js";
 
 const tableA = parseCsvTable(
@@ -63,6 +64,43 @@ test("verification promotes the latest table and starts the next comparison ther
   assert.strictEqual(review.previousTable, tableC);
   assert.strictEqual(review.currentTable, tableD);
   assert.deepEqual(review.summary.map((item) => item.label), ["1 individual cell modified"]);
+});
+
+test("verification promotes the clicked review snapshot without accepting a newer preview", () => {
+  let state = receiveLatestTable(emptyReviewLifecycle(), tableA);
+  state = receiveLatestTable(state, tableC);
+  const clickedReview = buildOutstandingReview(state);
+  assert.ok(clickedReview);
+
+  state = receiveLatestTable(state, tableD);
+  state = verifyReviewSnapshot(state, clickedReview);
+
+  assert.strictEqual(state.verifiedBaseline, tableC);
+  assert.strictEqual(state.latestTable, tableD);
+
+  const review = buildOutstandingReview(state);
+  assert.ok(review);
+  assert.strictEqual(review.previousTable, tableC);
+  assert.strictEqual(review.currentTable, tableD);
+  assert.deepEqual(review.summary[0].targets, [
+    { kind: "cell", rowId: "row_000003", column: "score", rowIndex: 2 }
+  ]);
+});
+
+test("verification ignores a clicked review whose baseline is stale", () => {
+  let renderedState = receiveLatestTable(emptyReviewLifecycle(), tableA);
+  renderedState = receiveLatestTable(renderedState, tableC);
+  const clickedReview = buildOutstandingReview(renderedState);
+  assert.ok(clickedReview);
+
+  let currentState = receiveLatestTable(emptyReviewLifecycle(), tableB);
+  currentState = receiveLatestTable(currentState, tableD);
+
+  const nextState = verifyReviewSnapshot(currentState, clickedReview);
+
+  assert.strictEqual(nextState, currentState);
+  assert.strictEqual(nextState.verifiedBaseline, tableB);
+  assert.strictEqual(nextState.latestTable, tableD);
 });
 
 test("no-change and reversal previews leave the verified baseline unchanged", () => {

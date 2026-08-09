@@ -37,6 +37,20 @@ export function receiveLatestTable(
   };
 }
 
+export function verifyReviewSnapshot(
+  state: ReviewLifecycleState,
+  reviewSnapshot: Pick<OutstandingReview, "previousTable" | "currentTable">
+): ReviewLifecycleState {
+  if (state.verifiedBaseline !== reviewSnapshot.previousTable) {
+    return state;
+  }
+
+  return {
+    verifiedBaseline: reviewSnapshot.currentTable,
+    latestTable: state.latestTable
+  };
+}
+
 export function verifyLatestTable(state: ReviewLifecycleState): ReviewLifecycleState {
   if (!state.latestTable) {
     return state;

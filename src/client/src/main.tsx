@@ -22,7 +22,7 @@ import {
   buildOutstandingReview,
   emptyReviewLifecycle,
   receiveLatestTable,
-  verifyLatestTable,
+  verifyReviewSnapshot,
   type OutstandingReview,
   type ReviewLifecycleState
 } from "./reviewLifecycle.js";
@@ -298,7 +298,12 @@ function SessionView({ sessionId }: { sessionId: string }) {
   }
 
   function verifyChanges() {
-    setReviewLifecycle((current) => verifyLatestTable(current));
+    if (!review) {
+      return;
+    }
+
+    const reviewSnapshot = review;
+    setReviewLifecycle((current) => verifyReviewSnapshot(current, reviewSnapshot));
     setReviewPresentation(emptyReviewPresentation());
     setScrollRequest(null);
   }
