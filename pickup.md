@@ -53,14 +53,15 @@ PORT=4173 npm run start
 
 POC runtime shape:
 
-1. User opens the hosted Companion Website.
-2. Companion Website creates an anonymous Upload Session.
-3. User gives the Viewer URL and agent-facing session URLs to the AI agent.
-4. If the user uploads the source CSV through the UI, the backend normalizes it as a Pending Handoff CSV until the agent imports and confirms it.
-5. Agent edits the CSV using Python in its sandbox and preserves `_row_id`.
-6. Agent uploads the current Working CSV Version to `/working` after each meaningful edit.
-7. TypeScript backend validates and relays the preview to active viewers, then discards agent working bytes.
-8. Active frontend replaces its current parsed table data and renders the updated table.
+1. In the current agent-first focus, the agent creates an anonymous Upload Session with `POST /api/sessions`.
+2. The session response gives the agent the Viewer URL and agent-facing session URLs; the agent provides the Viewer URL to the user and retains the operational URLs.
+3. In the supported browser-created path, the user creates the Upload Session and shares only its Viewer URL. The agent derives the Companion Website origin, session ID, and agent endpoints from that URL.
+4. The user opens the Viewer URL and connects to the live preview stream.
+5. If the user uploads the source CSV through the UI, the backend normalizes it as a Pending Handoff CSV until the agent imports and confirms it.
+6. Agent edits the CSV using Python in its sandbox and preserves `_row_id`.
+7. Agent uploads the current Working CSV Version to `/working` after each meaningful edit.
+8. TypeScript backend validates and relays the preview to active viewers, then discards agent working bytes.
+9. Active frontend replaces its current parsed table data and renders the updated table.
 
 For the POC, the frontend is allowed to be the only place that holds the current displayed table data. Backend/server state can contain pending UI handoff CSVs for up to 30 minutes, but not ongoing agent working data. Refresh, disconnect, or restart can lose the active preview; the agent can re-upload from the Python Workspace.
 

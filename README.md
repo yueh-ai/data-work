@@ -17,7 +17,22 @@ Open:
 http://localhost:3000
 ```
 
-For an agent-first session, create the Upload Session with `POST /api/sessions` and use the returned Viewer URL and agent-facing URLs. If a user already created the session in the browser, use the session ID at the end of the shared `/session/:sessionId` Viewer URL to derive the endpoints below. The Viewer page intentionally does not display agent URLs, tokens, or shell commands.
+For an agent-first session, create the Upload Session with `POST /api/sessions` and use the returned Viewer URL and agent-facing URLs.
+
+If a user already created the session in the browser, ask them to share only the Viewer URL. Derive both the Companion Website origin and session ID before using the commands below:
+
+```sh
+VIEWER_URL="${VIEWER_URL:?Set VIEWER_URL to the shared Companion Website Viewer URL}"
+COMPANION_WEBSITE_ORIGIN="${VIEWER_URL%%/session/*}"
+SESSION_ID="${VIEWER_URL##*/session/}"
+
+if [ "$COMPANION_WEBSITE_ORIGIN" = "$VIEWER_URL" ] || [ -z "$SESSION_ID" ]; then
+  echo "Viewer URL must end with /session/<session-id>" >&2
+  exit 1
+fi
+```
+
+The Viewer page intentionally does not display agent URLs, tokens, or shell commands. The command defaults below preserve a derived hosted origin and use `http://localhost:3000` only when no origin has been set.
 
 Upload an agent Working CSV Version:
 
