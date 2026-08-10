@@ -402,6 +402,7 @@ td.row-number {
 
 .change-review {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   margin-bottom: 14px;
   padding: 14px;
