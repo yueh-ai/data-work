@@ -3,17 +3,10 @@ import { createRoot } from "react-dom/client";
 import {
   Activity,
   AlertTriangle,
-  Check,
-  Clipboard,
-  CloudUpload,
-  Download,
   FileSpreadsheet,
-  KeyRound,
   LoaderCircle,
   Plus,
-  RefreshCw,
-  Table2,
-  Upload
+  RefreshCw
 } from "lucide-react";
 
 import type { ChangeSummaryItem, ChangeTarget } from "./changeSummary.js";
@@ -27,16 +20,11 @@ import {
   type ReviewLifecycleState
 } from "./reviewLifecycle.js";
 import { activeCellClass, firstReviewScrollTarget, removedGhostCellClass } from "./reviewClassNames.js";
+import { SessionHeader, type ConnectionState } from "./sessionHeader.js";
 import "./styles.css";
 
 type SessionCreateResponse = {
-  sessionId: string;
-  uploadToken: string;
   viewerUrl: string;
-  workingUploadUrl: string;
-  handoffDownloadUrl: string;
-  handoffConfirmUrl: string;
-  workingUploadCommand: string;
 };
 
 type SessionEvent = {
@@ -63,8 +51,6 @@ type WorkingPreviewEvent = {
 type HandoffStatus = "pending" | "confirmed" | "expired";
 
 type PreviewEvent = (HandoffPreviewEvent & { kind: "handoff"; handoffStatus: HandoffStatus }) | (WorkingPreviewEvent & { kind: "working" });
-
-type ConnectionState = "idle" | "connecting" | "live" | "error";
 
 type ReviewPresentationState = {
   activeSummaryId: string | null;
@@ -131,7 +117,6 @@ function CreateSession() {
         throw new Error("Session creation failed.");
       }
 
-      saveSessionSecrets(data);
       window.history.pushState(null, "", data.viewerUrl);
       window.dispatchEvent(new PopStateEvent("popstate"));
     } catch (err) {
@@ -169,10 +154,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const [reviewPresentation, setReviewPresentation] = useState<ReviewPresentationState>(emptyReviewPresentation);
   const [scrollRequest, setScrollRequest] = useState<ReviewScrollRequest | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
-  const [copyState, setCopyState] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const scrollSequence = useRef(0);
-  const secrets = getSessionSecrets(sessionId);
   const table = reviewLifecycle.latestTable;
   const outstandingReview = useMemo(
     () => buildOutstandingReview(reviewLifecycle),
@@ -204,7 +187,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
     setReviewPresentation(emptyReviewPresentation());
     setScrollRequest(null);
     setParseError(null);
-    setCopyState(null);
     setUploading(false);
     const events = new EventSource(`/api/sessions/${sessionId}/events`);
 
@@ -244,19 +226,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
   }, [sessionId]);
 
   const handoffUploadUrl = `/api/sessions/${sessionId}/handoff`;
-  const workingUploadUrl = `/api/sessions/${sessionId}/working`;
-  const handoffDownloadUrl = `${window.location.origin}/api/sessions/${sessionId}/handoff/csv`;
-  const handoffConfirmUrl = `${window.location.origin}/api/sessions/${sessionId}/handoff/confirm`;
-  const viewerUrl = `${window.location.origin}/session/${sessionId}`;
-  const command = useMemo(() => {
-    return [
-      "curl",
-      "-X PUT",
-      "-H 'Content-Type: text/csv'",
-      "--data-binary @working.csv",
-      `${window.location.origin}${workingUploadUrl}`
-    ].join(" ");
-  }, [workingUploadUrl]);
 
   function acceptPreview(nextPreview: PreviewEvent) {
     setParseError(null);
@@ -313,12 +282,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
     setScrollRequest({ summaryId, sequence: scrollSequence.current });
   }
 
-  async function copy(label: string, value: string) {
-    await navigator.clipboard.writeText(value);
-    setCopyState(label);
-    window.setTimeout(() => setCopyState(null), 1600);
-  }
-
   async function uploadFile(file: File | null) {
     if (!file) {
       return;
@@ -349,76 +312,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
   return (
     <main className="app-shell">
-      <header className="top-bar">
-        <div className="product-lockup">
-          <div className="brand-mark brand-mark--small" aria-hidden="true">
-            <FileSpreadsheet size={22} />
-          </div>
-          <div>
-            <p className="eyebrow">CSV Companion</p>
-            <h1>Upload Session</h1>
-          </div>
-        </div>
-        <div className={`status-pill status-pill--${connection}`}>
-          {connection === "live" ? <Activity size={15} /> : connection === "connecting" ? <LoaderCircle className="spin" size={15} /> : <AlertTriangle size={15} />}
-          <span>{connectionLabel(connection)}</span>
-        </div>
-      </header>
-
-      <section className="control-band" aria-label="Upload Session controls">
-        <InfoBlock
-          icon={<Table2 size={18} />}
-          label="Viewer URL"
-          value={viewerUrl}
-          actionLabel="Copy Viewer URL"
-          onCopy={() => copy("viewer", viewerUrl)}
-          copied={copyState === "viewer"}
-        />
-        <InfoBlock
-          icon={<KeyRound size={18} />}
-          label="Upload Token"
-          value={secrets?.uploadToken ?? "POC placeholder token; uploads do not require auth"}
-          actionLabel="Copy upload token placeholder"
-          onCopy={secrets?.uploadToken ? () => copy("token", secrets.uploadToken) : undefined}
-          copied={copyState === "token"}
-        />
-        <InfoBlock
-          icon={<Download size={18} />}
-          label="Handoff Download"
-          value={secrets?.handoffDownloadUrl ? `${window.location.origin}${secrets.handoffDownloadUrl}` : handoffDownloadUrl}
-          actionLabel="Copy handoff download URL"
-          onCopy={() => copy("handoff-download", handoffDownloadUrl)}
-          copied={copyState === "handoff-download"}
-        />
-        <InfoBlock
-          icon={<Check size={18} />}
-          label="Confirm Import"
-          value={secrets?.handoffConfirmUrl ? `${window.location.origin}${secrets.handoffConfirmUrl}` : handoffConfirmUrl}
-          actionLabel="Copy handoff confirm URL"
-          onCopy={() => copy("handoff-confirm", handoffConfirmUrl)}
-          copied={copyState === "handoff-confirm"}
-        />
-        <div className="command-block">
-          <div className="block-heading">
-            <CloudUpload size={18} />
-            <span>Upload Command</span>
-            <button className="icon-button" type="button" title="Copy upload command" onClick={() => copy("command", command)}>
-              {copyState === "command" ? <Check size={16} /> : <Clipboard size={16} />}
-            </button>
-          </div>
-          <code>{command}</code>
-        </div>
-        <label className="file-upload">
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            disabled={uploading}
-            onChange={(event) => uploadFile(event.currentTarget.files?.[0] ?? null)}
-          />
-          {uploading ? <LoaderCircle className="spin" size={18} /> : <Upload size={18} />}
-          <span>{uploading ? "Uploading" : "Browser Upload"}</span>
-        </label>
-      </section>
+      <SessionHeader connection={connection} uploading={uploading} onUploadFile={uploadFile} />
 
       <section className="notice-row" aria-live="polite">
         <InlineMessage
@@ -474,35 +368,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
         </section>
       )}
     </main>
-  );
-}
-
-function InfoBlock({
-  icon,
-  label,
-  value,
-  actionLabel,
-  onCopy,
-  copied
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  actionLabel: string;
-  onCopy?: () => void;
-  copied: boolean;
-}) {
-  return (
-    <div className="info-block">
-      <div className="block-heading">
-        {icon}
-        <span>{label}</span>
-        <button className="icon-button" type="button" title={actionLabel} onClick={onCopy} disabled={!onCopy}>
-          {copied ? <Check size={16} /> : <Clipboard size={16} />}
-        </button>
-      </div>
-      <code>{value}</code>
-    </div>
   );
 }
 
@@ -750,48 +615,6 @@ function handoffNoticeText(previewEvent: HandoffPreviewEvent & { handoffStatus: 
 function readRoute(path: string) {
   const match = path.match(/^\/session\/([^/]+)$/);
   return { sessionId: match?.[1] };
-}
-
-function saveSessionSecrets(session: SessionCreateResponse) {
-  localStorage.setItem(
-    `csv-companion:${session.sessionId}`,
-    JSON.stringify({
-      uploadToken: session.uploadToken,
-      workingUploadUrl: session.workingUploadUrl,
-      handoffDownloadUrl: session.handoffDownloadUrl,
-      handoffConfirmUrl: session.handoffConfirmUrl,
-      workingUploadCommand: session.workingUploadCommand
-    })
-  );
-}
-
-function getSessionSecrets(sessionId: string) {
-  const raw = localStorage.getItem(`csv-companion:${sessionId}`);
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(raw) as Pick<
-      SessionCreateResponse,
-      "uploadToken" | "workingUploadUrl" | "handoffDownloadUrl" | "handoffConfirmUrl" | "workingUploadCommand"
-    >;
-  } catch {
-    return null;
-  }
-}
-
-function connectionLabel(connection: ConnectionState) {
-  if (connection === "live") {
-    return "Live";
-  }
-  if (connection === "connecting") {
-    return "Connecting";
-  }
-  if (connection === "error") {
-    return "Disconnected";
-  }
-  return "Idle";
 }
 
 function formatNumber(value: number) {

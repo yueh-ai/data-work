@@ -35,17 +35,6 @@ button:disabled {
   opacity: 0.52;
 }
 
-code {
-  display: block;
-  overflow: hidden;
-  color: #1c2b26;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 0.78rem;
-  line-height: 1.45;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .app-shell {
   width: min(1480px, calc(100vw - 32px));
   min-height: 100vh;
@@ -136,6 +125,14 @@ h2 {
   font-size: 1.45rem;
 }
 
+.session-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .primary-action,
 .file-upload {
   display: inline-flex;
@@ -171,49 +168,6 @@ h2 {
   position: absolute;
   inset: 0;
   opacity: 0;
-}
-
-.file-upload--disabled {
-  background: #77827d;
-}
-
-.control-band {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(200px, 1fr)) minmax(360px, 1.5fr) auto;
-  gap: 12px;
-  align-items: stretch;
-  padding: 14px;
-  border: 1px solid #dce2dc;
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.info-block,
-.command-block {
-  display: grid;
-  min-width: 0;
-  gap: 9px;
-  padding: 12px;
-  border: 1px solid #e2e7e2;
-  border-radius: 8px;
-  background: #fbfcfb;
-}
-
-.block-heading {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-  color: #53635e;
-  font-size: 0.78rem;
-  font-weight: 800;
-}
-
-.block-heading span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .icon-button {
@@ -675,20 +629,6 @@ th.review-cell {
   }
 }
 
-@media (max-width: 1200px) {
-  .control-band {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .command-block {
-    grid-column: 1 / -1;
-  }
-
-  .file-upload {
-    width: 100%;
-  }
-}
-
 @media (max-width: 720px) {
   .app-shell {
     width: min(100% - 20px, 1480px);
@@ -700,13 +640,13 @@ th.review-cell {
     flex-direction: column;
   }
 
-  .control-band,
-  .metrics-grid {
-    grid-template-columns: 1fr;
+  .session-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
-  .command-block {
-    grid-column: auto;
+  .metrics-grid {
+    grid-template-columns: 1fr;
   }
 
   .change-review__top {
