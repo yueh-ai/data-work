@@ -50,7 +50,7 @@ Upload a Working CSV Version with:
 
 ```sh
 WORKING_CSV_PATH=working.csv
-COMPANION_WEBSITE_ORIGIN=http://localhost:3000
+COMPANION_WEBSITE_ORIGIN="${COMPANION_WEBSITE_ORIGIN:-http://localhost:3000}"
 SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response or Viewer URL}"
 
 curl -X PUT \
@@ -65,7 +65,7 @@ When the agent has no source CSV yet, wait for the user to upload in the UI, the
 
 ```sh
 SOURCE_CSV_PATH=source.csv
-COMPANION_WEBSITE_ORIGIN=http://localhost:3000
+COMPANION_WEBSITE_ORIGIN="${COMPANION_WEBSITE_ORIGIN:-http://localhost:3000}"
 SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response or Viewer URL}"
 
 curl -f -o "$SOURCE_CSV_PATH" \
@@ -75,7 +75,7 @@ curl -f -o "$SOURCE_CSV_PATH" \
 After saving and reading the file successfully in Python, confirm import:
 
 ```sh
-COMPANION_WEBSITE_ORIGIN=http://localhost:3000
+COMPANION_WEBSITE_ORIGIN="${COMPANION_WEBSITE_ORIGIN:-http://localhost:3000}"
 SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response or Viewer URL}"
 
 curl -X POST \

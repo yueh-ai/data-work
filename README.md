@@ -22,30 +22,33 @@ For an agent-first session, create the Upload Session with `POST /api/sessions` 
 Upload an agent Working CSV Version:
 
 ```sh
+COMPANION_WEBSITE_ORIGIN="${COMPANION_WEBSITE_ORIGIN:-http://localhost:3000}"
 SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response or Viewer URL}"
 
 curl -X PUT \
   -H 'Content-Type: text/csv' \
   --data-binary @working.csv \
-  "http://localhost:3000/api/sessions/$SESSION_ID/working"
+  "$COMPANION_WEBSITE_ORIGIN/api/sessions/$SESSION_ID/working"
 ```
 
 Download a pending UI handoff CSV into the agent workspace:
 
 ```sh
+COMPANION_WEBSITE_ORIGIN="${COMPANION_WEBSITE_ORIGIN:-http://localhost:3000}"
 SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response or Viewer URL}"
 
 curl -f -o source.csv \
-  "http://localhost:3000/api/sessions/$SESSION_ID/handoff/csv"
+  "$COMPANION_WEBSITE_ORIGIN/api/sessions/$SESSION_ID/handoff/csv"
 ```
 
 Confirm handoff import after the agent has saved and verified the file:
 
 ```sh
+COMPANION_WEBSITE_ORIGIN="${COMPANION_WEBSITE_ORIGIN:-http://localhost:3000}"
 SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response or Viewer URL}"
 
 curl -X POST \
-  "http://localhost:3000/api/sessions/$SESSION_ID/handoff/confirm"
+  "$COMPANION_WEBSITE_ORIGIN/api/sessions/$SESSION_ID/handoff/confirm"
 ```
 
 ## Build
