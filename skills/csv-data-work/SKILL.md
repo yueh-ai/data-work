@@ -17,10 +17,32 @@ Use this skill when a user asks an AI agent to inspect, clean, transform, featur
 ## Companion Website Session
 
 1. Always create or open an Upload Session before the preview loop.
-2. Capture the Viewer URL, Working Upload URL, Handoff Download URL, and Handoff Confirm URL.
-3. Open or provide the Viewer URL so the user can see the Companion Website.
-4. Treat the Companion Website as preview-only. It must not be used to transform data.
-5. Treat the backend as a relay and short-lived UI handoff shelf, not as storage for the latest Working CSV Version.
+2. When creating a session with `POST /api/sessions`, capture the Viewer URL, Working Upload URL, Handoff Download URL, and Handoff Confirm URL from the response.
+3. When joining a browser-created session, ask for the Viewer URL. Extract its origin and the session ID after `/session/`, then derive the agent endpoints from those two values. Do not ask the user to find agent controls on the Viewer page.
+4. Open or provide the Viewer URL so the user can see the Companion Website.
+5. Treat the Companion Website as preview-only. It must not be used to transform data.
+6. Treat the backend as a relay and short-lived UI handoff shelf, not as storage for the latest Working CSV Version.
+
+## Joining From a Viewer URL
+
+If the user shares a Viewer URL such as `http://localhost:3000/session/<session-id>`, derive the session variables before using the upload or handoff commands:
+
+```sh
+VIEWER_URL="${VIEWER_URL:?Set VIEWER_URL to the shared Companion Website Viewer URL}"
+COMPANION_WEBSITE_ORIGIN="${VIEWER_URL%%/session/*}"
+SESSION_ID="${VIEWER_URL##*/session/}"
+
+if [ "$COMPANION_WEBSITE_ORIGIN" = "$VIEWER_URL" ] || [ -z "$SESSION_ID" ]; then
+  echo "Viewer URL must end with /session/<session-id>" >&2
+  exit 1
+fi
+```
+
+The agent endpoints are:
+
+- Working upload: `$COMPANION_WEBSITE_ORIGIN/api/sessions/$SESSION_ID/working`
+- Handoff download: `$COMPANION_WEBSITE_ORIGIN/api/sessions/$SESSION_ID/handoff/csv`
+- Handoff confirm: `$COMPANION_WEBSITE_ORIGIN/api/sessions/$SESSION_ID/handoff/confirm`
 
 ## Upload Command
 
@@ -29,7 +51,7 @@ Upload a Working CSV Version with:
 ```sh
 WORKING_CSV_PATH=working.csv
 COMPANION_WEBSITE_ORIGIN=http://localhost:3000
-SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response}"
+SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response or Viewer URL}"
 
 curl -X PUT \
   -H 'Content-Type: text/csv' \
@@ -44,7 +66,7 @@ When the agent has no source CSV yet, wait for the user to upload in the UI, the
 ```sh
 SOURCE_CSV_PATH=source.csv
 COMPANION_WEBSITE_ORIGIN=http://localhost:3000
-SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response}"
+SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response or Viewer URL}"
 
 curl -f -o "$SOURCE_CSV_PATH" \
   "$COMPANION_WEBSITE_ORIGIN/api/sessions/$SESSION_ID/handoff/csv"
@@ -54,7 +76,7 @@ After saving and reading the file successfully in Python, confirm import:
 
 ```sh
 COMPANION_WEBSITE_ORIGIN=http://localhost:3000
-SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response}"
+SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response or Viewer URL}"
 
 curl -X POST \
   "$COMPANION_WEBSITE_ORIGIN/api/sessions/$SESSION_ID/handoff/confirm"

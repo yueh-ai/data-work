@@ -171,7 +171,7 @@ That recovery upload becomes a fresh first baseline and produces no review contr
 
 If the server process restarts, the in-memory Upload Session is also lost. The agent must create a new session and provide its new Viewer URL.
 
-The guide should also warn the presenter that the table may appear below session controls in a short browser viewport. A successful upload with `activeViewers: 1` may already be visible farther down the page.
+The Viewer intentionally omits agent-facing URLs, tokens, and shell commands. The guide should confirm that the current preview or empty state begins directly below the compact header, notices, and metadata.
 
 ## Presenter Talking Points
 

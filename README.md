@@ -17,12 +17,12 @@ Open:
 http://localhost:3000
 ```
 
-Create a new Upload Session, then use the generated session ID with the commands below.
+For an agent-first session, create the Upload Session with `POST /api/sessions` and use the returned Viewer URL and agent-facing URLs. If a user already created the session in the browser, use the session ID at the end of the shared `/session/:sessionId` Viewer URL to derive the endpoints below. The Viewer page intentionally does not display agent URLs, tokens, or shell commands.
 
 Upload an agent Working CSV Version:
 
 ```sh
-SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response}"
+SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response or Viewer URL}"
 
 curl -X PUT \
   -H 'Content-Type: text/csv' \
@@ -33,7 +33,7 @@ curl -X PUT \
 Download a pending UI handoff CSV into the agent workspace:
 
 ```sh
-SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response}"
+SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response or Viewer URL}"
 
 curl -f -o source.csv \
   "http://localhost:3000/api/sessions/$SESSION_ID/handoff/csv"
@@ -42,7 +42,7 @@ curl -f -o source.csv \
 Confirm handoff import after the agent has saved and verified the file:
 
 ```sh
-SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response}"
+SESSION_ID="${SESSION_ID:?Set SESSION_ID from the session response or Viewer URL}"
 
 curl -X POST \
   "http://localhost:3000/api/sessions/$SESSION_ID/handoff/confirm"

@@ -10,7 +10,7 @@ Use `goal.md` as the current source for product scope.
 
 - Added a hosted TypeScript Companion Website POC.
 - Added an Express backend with anonymous Upload Session creation, pending UI handoff endpoints, agent Working CSV relay, and Server-Sent Events viewer updates.
-- Added a Vite React frontend that creates sessions, shows Viewer URL / Upload Token / handoff URLs / working upload command, parses relayed CSV previews in the browser, infers lightweight column types, and renders a spreadsheet-like table.
+- Added a Vite React frontend that creates sessions, provides a user-focused Viewer with connection status and browser source upload, parses relayed CSV previews in the browser, infers lightweight column types, and renders a spreadsheet-like table. Agent-facing URLs and commands come from the session API rather than the Viewer.
 - Added direct browser source upload as a Pending Handoff CSV path when the agent does not yet have source data.
 - Added the single-file skill at `skills/csv-data-work/SKILL.md`.
 - Added run/build notes in `README.md`.
